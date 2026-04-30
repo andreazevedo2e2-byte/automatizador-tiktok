@@ -29,7 +29,11 @@ const { translateTexts } = require("./lib/translate.cjs");
 
 function createOcrRunner(rootDir) {
   return async function runOcr(slidePaths, runId) {
-    const worker = await createWorker(path.join(rootDir, "eng.traineddata"));
+    const worker = await createWorker("eng", 1, {
+      langPath: rootDir,
+      cachePath: path.join(rootDir, ".tesseract-cache"),
+      gzip: false,
+    });
     const slides = [];
     try {
       for (const [index, slidePath] of slidePaths.entries()) {
