@@ -1,17 +1,16 @@
-version: "3.9"
-
 services:
   tiktok-extractor:
-    build: .
-    container_name: tiktok-extractor
+    image: ghcr.io/andreazevedo2e2-byte/automatizador-tiktok:latest
     restart: unless-stopped
     environment:
       PORT: "4141"
       HOST: "0.0.0.0"
-      HEADLESS: "true"
+      HEADLESS: "false"
       ALLOWED_ORIGINS: "https://automatizador-tiktok.vercel.app"
+      REMOTE_LOGIN_URL: "https://zapspark-tiktok-login.te7sty.easypanel.host/vnc.html?autoconnect=true&resize=remote"
     ports:
       - "4141:4141"
+      - "6080:6080"
     volumes:
       - ./runs:/app/runs
       - ./browser-profile:/app/browser-profile

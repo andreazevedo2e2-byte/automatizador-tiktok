@@ -165,6 +165,15 @@ button:disabled {
   padding: 18px;
 }
 
+.info-panel {
+  background: #eefaf6;
+}
+
+.info-panel a {
+  color: var(--accent-2);
+  font-weight: 800;
+}
+
 .empty-state {
   align-items: center;
   background: var(--panel);

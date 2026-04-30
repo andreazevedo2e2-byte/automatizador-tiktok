@@ -2,8 +2,9 @@ import { Download, FileText, ImagePlus, Loader2, LogIn, ScanText } from "lucide-
 import { useEffect, useMemo, useState } from "react";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
+const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
 const defaultApiBase =
-  envApiBase || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4141" : "");
+  envApiBase || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4141" : productionApiBase);
 const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 
@@ -25,9 +26,18 @@ export function App() {
   const [extracting, setExtracting] = useState(false);
   const [openingLogin, setOpeningLogin] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [remoteLoginUrl, setRemoteLoginUrl] = useState("");
 
   useEffect(() => {
     window.localStorage.setItem("tiktok-api-base", apiBase);
+  }, [apiBase]);
+
+  useEffect(() => {
+    if (!apiBase.trim()) return;
+    fetch(`${apiBase}/api/health`)
+      .then((response) => response.json())
+      .then((data) => setRemoteLoginUrl(data.remoteLoginUrl || ""))
+      .catch(() => {});
   }, [apiBase]);
 
   const exportPayload = useMemo(() => {
@@ -81,11 +91,15 @@ export function App() {
 
     setError("");
     setOpeningLogin(true);
-    setStatus("Opening Chrome login browser...");
+    setStatus("Preparing TikTok login...");
     try {
       const response = await fetch(`${apiBase}/api/open-login`, { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not open login browser.");
+      if (data.remoteLoginUrl) {
+        setRemoteLoginUrl(data.remoteLoginUrl);
+        window.open(data.remoteLoginUrl, "_blank", "noopener,noreferrer");
+      }
       setStatus(data.message);
     } catch (requestError) {
       setError(requestError.message);
@@ -158,7 +172,7 @@ export function App() {
         </button>
         <button onClick={openLoginBrowser} disabled={extracting || openingLogin || uploading}>
           {openingLogin ? <Loader2 className="spin" size={18} /> : <LogIn size={18} />}
-          Open Login Browser
+          Connect TikTok Account
         </button>
         <label className="upload-button">
           {uploading ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
@@ -173,10 +187,19 @@ export function App() {
 
       {error && <div className="error-panel">{error}</div>}
 
+      {remoteLoginUrl && (
+        <div className="error-panel info-panel">
+          Remote TikTok login window:{" "}
+          <a href={remoteLoginUrl} target="_blank" rel="noreferrer">
+            {remoteLoginUrl}
+          </a>
+        </div>
+      )}
+
       {!result && (
         <section className="empty-state">
           <FileText size={42} />
-          <p>Set the backend URL once, then paste a TikTok slideshow link or upload screenshots for OCR.</p>
+          <p>Connect the TikTok account once, then paste a TikTok slideshow link or upload screenshots for OCR.</p>
         </section>
       )}
 

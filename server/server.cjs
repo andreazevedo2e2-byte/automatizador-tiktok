@@ -15,6 +15,7 @@ const rootDir = path.resolve(__dirname, "..");
 const runsDir = path.join(rootDir, "runs");
 const profileDir = path.join(rootDir, "browser-profile");
 const isHeadless = String(process.env.HEADLESS || "false").toLowerCase() === "true";
+const remoteLoginUrl = (process.env.REMOTE_LOGIN_URL || "").trim();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((entry) => entry.trim())
@@ -59,6 +60,7 @@ async function launchBrowserContext() {
     executablePath: executablePath || undefined,
     headless: isHeadless,
     viewport: { width: 1320, height: 920 },
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
   });
@@ -183,7 +185,7 @@ async function runOcr(slidePaths) {
 app.use("/runs", express.static(runsDir));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, mode: "extract-only", headless: isHeadless });
+  res.json({ ok: true, mode: "extract-only", headless: isHeadless, remoteLoginUrl });
 });
 
 app.post("/api/open-login", async (_req, res) => {
@@ -196,7 +198,13 @@ app.post("/api/open-login", async (_req, res) => {
     }
     const page = sharedBrowserContext.pages()[0] || (await sharedBrowserContext.newPage());
     await page.goto("https://www.tiktok.com/login", { waitUntil: "domcontentloaded", timeout: 90000 });
-    res.json({ ok: true, message: "Login browser opened. Log in there, then run Extract Text again." });
+    res.json({
+      ok: true,
+      message: remoteLoginUrl
+        ? "TikTok login is ready. Open the remote login window, sign in there once, then use Extract Text."
+        : "Login browser opened. Log in there, then run Extract Text again.",
+      remoteLoginUrl,
+    });
   } catch (error) {
     res.status(400).json({ error: error.message || "Could not open login browser." });
   }
