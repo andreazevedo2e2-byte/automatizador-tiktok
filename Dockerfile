@@ -7,6 +7,8 @@ ENV PORT=4141
 ENV HOST=0.0.0.0
 ENV HEADLESS=false
 ENV DISPLAY=:99
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   xvfb \
