@@ -9,7 +9,7 @@ services:
       PORT: "4141"
       HOST: "0.0.0.0"
       HEADLESS: "true"
-      ALLOWED_ORIGINS: "https://SEU-FRONTEND-VERCEL.vercel.app"
+      ALLOWED_ORIGINS: "https://automatizador-tiktok.vercel.app"
     ports:
       - "4141:4141"
     volumes:

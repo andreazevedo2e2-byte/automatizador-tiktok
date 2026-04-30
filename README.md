@@ -29,7 +29,7 @@ Use service type Docker Compose and paste [docker-compose.yml](/C:/Users/andre/D
 
 Before deploy, edit:
 
-- `ALLOWED_ORIGINS=https://SEU-FRONTEND-VERCEL.vercel.app`
+- `ALLOWED_ORIGINS=https://automatizador-tiktok.vercel.app`
 
 Expose port `4141` via your domain, for example:
 
@@ -39,11 +39,9 @@ Expose port `4141` via your domain, for example:
 
 Project root: this folder (`automatizador-tiktok`), using [vercel.json](/C:/Users/andre/Documents/Codex/2026-04-29/codex-primeiro-eu-quero-que-voc/automatizador-tiktok/vercel.json).
 
-Set Vercel env var:
+Live frontend:
 
-- `VITE_API_BASE=https://api.seudominio.com`
-
-Re-deploy after setting env vars.
+- `https://automatizador-tiktok.vercel.app`
 
 ### 3) Login session flow
 
