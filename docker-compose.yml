@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  tiktok-extractor:
+    build: .
+    container_name: tiktok-extractor
+    restart: unless-stopped
+    environment:
+      PORT: "4141"
+      HOST: "0.0.0.0"
+      HEADLESS: "true"
+      ALLOWED_ORIGINS: "https://SEU-FRONTEND-VERCEL.vercel.app"
+    ports:
+      - "4141:4141"
+    volumes:
+      - ./runs:/app/runs
+      - ./browser-profile:/app/browser-profile
