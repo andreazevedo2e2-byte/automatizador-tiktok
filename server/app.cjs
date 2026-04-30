@@ -79,6 +79,7 @@ function createApp(config = {}) {
   const profileDir = path.join(rootDir, "browser-profile");
   const isHeadless = String(process.env.HEADLESS || "false").toLowerCase() === "true";
   const remoteLoginUrl = (process.env.REMOTE_LOGIN_URL || "").trim();
+  const allowDirectFallback = String(process.env.ALLOW_TIKTOK_DIRECT_FALLBACK || "false").toLowerCase() === "true";
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map((entry) => entry.trim())
@@ -112,7 +113,7 @@ function createApp(config = {}) {
   app.use("/runs", express.static(store.runsDir));
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, mode: "preview-and-zip", headless: isHeadless, remoteLoginUrl });
+    res.json({ ok: true, mode: "preview-and-zip", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
   });
 
   app.get("/api/runs/:runId", async (req, res) => {
@@ -166,13 +167,29 @@ function createApp(config = {}) {
       let provider = "snaptik";
       try {
         slidePaths = await services.captureSlidesViaSnapTik(sourceUrl, store.getSlidesDir(runId));
-      } catch {
+      } catch (snapTikError) {
+        console.error("[extract] SnapTik failed", snapTikError);
+
+        if (!allowDirectFallback) {
+          throw new Error(
+            `A extração automática via SnapTik falhou. ${snapTikError?.message || "Tente novamente ou use OCR via imagens."}`
+          );
+        }
+
         provider = "tiktok-direct";
-        slidePaths = await services.captureSlidesDirectly({
-          sourceUrl,
-          slidesDir: store.getSlidesDir(runId),
-          sharedBrowserContext,
-        });
+
+        try {
+          slidePaths = await services.captureSlidesDirectly({
+            sourceUrl,
+            slidesDir: store.getSlidesDir(runId),
+            sharedBrowserContext,
+          });
+        } catch (directError) {
+          console.error("[extract] TikTok direct fallback failed", directError);
+          throw new Error(
+            `SnapTik falhou (${snapTikError?.message || "sem detalhe"}) e o fallback direto do TikTok também falhou (${directError?.message || "sem detalhe"}).`
+          );
+        }
       }
 
       const slides = await services.runOcr(slidePaths, runId);
@@ -204,6 +221,7 @@ function createApp(config = {}) {
       await store.saveRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
+      console.error("[extract] request failed", error);
       res.status(400).json({ error: error.message || "Extraction failed." });
     }
   });
