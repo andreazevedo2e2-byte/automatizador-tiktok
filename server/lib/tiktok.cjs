@@ -76,19 +76,24 @@ async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
 
     const slidePaths = [];
     for (const [index, imageUrl] of imageUrls.entries()) {
-      const response = await page.request.get(imageUrl, {
-        timeout: 30000,
-        headers: {
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        },
-      });
-      if (!response.ok()) continue;
-      const bytes = await response.body();
-      if (bytes.length < 5000) continue;
-      const slidePath = path.join(slidesDir, `slide-${String(index + 1).padStart(2, "0")}.jpg`);
-      await fs.writeFile(slidePath, bytes);
-      slidePaths.push(slidePath);
+      try {
+        const response = await page.request.get(imageUrl, {
+          timeout: 30000,
+          headers: {
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+          },
+        });
+        if (!response.ok()) continue;
+        const bytes = await response.body();
+        if (bytes.length < 5000) continue;
+        const slidePath = path.join(slidesDir, `slide-${String(index + 1).padStart(2, "0")}.jpg`);
+        await fs.writeFile(slidePath, bytes);
+        slidePaths.push(slidePath);
+      } catch {
+        // Some TikTok CDN hosts intermittently fail DNS or signed-url fetches.
+        // Keep going so one bad slide host doesn't kill the whole slideshow run.
+      }
     }
 
     if (!slidePaths.length) {
