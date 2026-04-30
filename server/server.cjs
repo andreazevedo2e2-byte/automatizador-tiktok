@@ -34,6 +34,15 @@ app.use(express.json({ limit: "25mb" }));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 let sharedBrowserContext = null;
 
+async function launchEphemeralBrowser() {
+  const executablePath = await findChromeExecutable();
+  return chromium.launch({
+    executablePath: executablePath || undefined,
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+}
+
 async function findChromeExecutable() {
   const candidates = [
     process.env.CHROME_PATH,
@@ -162,6 +171,64 @@ async function captureSlides(sourceUrl, runDir) {
   return slidePaths;
 }
 
+async function captureSlidesViaSnapTik(sourceUrl, runDir) {
+  const browser = await launchEphemeralBrowser();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+
+  try {
+    await page.goto("https://snaptik.app/pt/download-tiktok-slide", {
+      waitUntil: "domcontentloaded",
+      timeout: 90000,
+    });
+
+    await page.fill("#url", sourceUrl);
+    await page.click('button[type="submit"], input[type="submit"], .button-submit');
+    await page.waitForSelector("#download .photo img, #download .download-box", {
+      timeout: 30000,
+    });
+    await page.waitForTimeout(1500);
+
+    const imageUrls = await page.evaluate(() => {
+      const urls = [];
+      document.querySelectorAll("#download .photo img").forEach((img) => {
+        const src = img.getAttribute("src") || "";
+        if (src && !urls.includes(src)) urls.push(src);
+      });
+      return urls;
+    });
+
+    if (!imageUrls.length) {
+      throw new Error("SnapTik did not return any slideshow images.");
+    }
+
+    const slidePaths = [];
+    for (const [index, imageUrl] of imageUrls.entries()) {
+      const response = await page.request.get(imageUrl, {
+        timeout: 30000,
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        },
+      });
+      if (!response.ok()) continue;
+      const bytes = await response.body();
+      if (bytes.length < 5000) continue;
+      const slidePath = path.join(runDir, "slides", `slide-${String(index + 1).padStart(2, "0")}.jpg`);
+      await fs.writeFile(slidePath, bytes);
+      slidePaths.push(slidePath);
+    }
+
+    if (!slidePaths.length) {
+      throw new Error("SnapTik returned image entries, but download failed.");
+    }
+
+    return slidePaths;
+  } finally {
+    await page.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
 async function runOcr(slidePaths) {
   const worker = await createWorker("eng");
   const slides = [];
@@ -215,11 +282,21 @@ app.post("/api/extract", async (req, res) => {
     const sourceUrl = normalizeTikTokUrl(req.body.url);
     const runId = timestamp();
     const runDir = await ensureRunDir(runId);
-    const slidePaths = await captureSlides(sourceUrl, runDir);
+    let slidePaths;
+    let provider = "snaptik";
+
+    try {
+      slidePaths = await captureSlidesViaSnapTik(sourceUrl, runDir);
+    } catch (snaptikError) {
+      provider = "tiktok";
+      slidePaths = await captureSlides(sourceUrl, runDir);
+    }
+
     const slides = await runOcr(slidePaths);
     const payload = {
       runId,
       sourceUrl,
+      provider,
       slides,
       combinedText: slides.map((slide) => `Slide ${slide.slide}\n${slide.text}`).join("\n\n"),
     };
