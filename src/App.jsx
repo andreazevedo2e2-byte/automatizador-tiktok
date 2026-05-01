@@ -17,7 +17,7 @@ import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
-const apiBase = envApiBase || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4141" : productionApiBase);
+const apiBase = envApiBase || productionApiBase;
 const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 
@@ -68,6 +68,15 @@ function getActiveStage(run) {
 
 function copyText(value) {
   return navigator.clipboard.writeText(value || "");
+}
+
+async function readJsonResponse(response, fallbackMessage) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`${fallbackMessage} O servidor respondeu em formato inválido. Atualize a página e tente de novo.`);
+  }
 }
 
 function LoadingIcon({ active }) {
@@ -702,7 +711,7 @@ export function App() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code, state, error: oauthError }),
         });
-        const data = await response.json();
+        const data = await readJsonResponse(response, "Não consegui conectar o Postiz.");
         if (!response.ok) throw new Error(data.error || "Não consegui conectar o Postiz.");
         setAccounts(data.accounts || []);
         setStatus("Postiz conectado. Volte para a etapa Publicar.");
@@ -738,7 +747,7 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "Não consegui carregar as contas do Postiz.");
       if (!response.ok) throw new Error(data.error || "Não consegui extrair esse post.");
       hydrateRun(data);
       setStatus(`${data.slides.length} slides prontos para revisar.`);
@@ -762,7 +771,7 @@ export function App() {
       const formData = new FormData();
       selected.forEach((file) => formData.append("slides", file));
       const response = await fetch(`${apiBase}/api/ocr-upload`, { method: "POST", body: formData });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "Não consegui iniciar a conexão com Postiz.");
       if (!response.ok) throw new Error(data.error || "Não consegui ler esses prints.");
       hydrateRun(data);
       setStatus(`${data.slides.length} slides prontos para revisar.`);
@@ -821,7 +830,7 @@ export function App() {
         }),
       });
 
-      const data = await response.json();
+      const data = await readJsonResponse(response, "Não consegui enviar ao Postiz.");
       if (!response.ok) throw new Error(data.error || "Não consegui salvar a revisão.");
       hydrateRun(data);
       setStatus("Revisão salva. Agora envie suas imagens.");

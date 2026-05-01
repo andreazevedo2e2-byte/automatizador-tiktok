@@ -67,6 +67,14 @@ function createApp(config = {}) {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const isLocalDevOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+  const isVercelOrigin = (origin) => {
+    try {
+      return new URL(origin).hostname.endsWith(".vercel.app");
+    } catch {
+      return false;
+    }
+  };
 
   const services = {
     extractCaptionAndHashtags,
@@ -88,8 +96,10 @@ function createApp(config = {}) {
     cors({
       origin(origin, callback) {
         if (!origin) return callback(null, true);
-        if (!allowedOrigins.length || allowedOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error("CORS blocked for this origin."));
+        if (!allowedOrigins.length || allowedOrigins.includes(origin) || isLocalDevOrigin(origin) || isVercelOrigin(origin)) {
+          return callback(null, true);
+        }
+        return callback(null, false);
       },
     })
   );
