@@ -17,7 +17,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildProjectRoute, getUnlockedProjectStages, parseProjectRoute } from "./project-route.mjs";
 import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.js";
-import { computeLayerDelta, estimateLayerFrameHeight } from "./editor-math.mjs";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
@@ -32,14 +31,15 @@ const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
   { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
-  { key: "publish", number: "04", title: "Publicar", hint: "Postiz e contas" },
+  { key: "preview", number: "04", title: "Preview", hint: "Validar slideshow" },
+  { key: "publish", number: "05", title: "Publicar", hint: "Postiz e contas" },
 ];
 
 const stageByRun = {
   review: "review",
   images: "images",
-  render: "publish",
-  preview: "publish",
+  render: "preview",
+  preview: "preview",
   publish: "publish",
 };
 
@@ -997,6 +997,49 @@ function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onCon
   );
 }
 
+function PreviewStage({ run, activeIndex, setActiveIndex, onContinue }) {
+  const slide = run.slides[activeIndex];
+
+  return (
+    <section className="stage-card review-stage">
+      <div className="review-workbench">
+        <div className="story-column">
+          <PhonePreview
+            slide={slide}
+            slideIndex={activeIndex}
+            total={run.slides.length}
+            rendered
+            onPrev={() => setActiveIndex(Math.max(0, activeIndex - 1))}
+            onNext={() => setActiveIndex(Math.min(run.slides.length - 1, activeIndex + 1))}
+          />
+          <SlideRail rendered slides={run.slides} activeIndex={activeIndex} onSelect={setActiveIndex} />
+        </div>
+
+        <div className="editor-panel review-editor-panel">
+          <article className="script-card">
+            <span>Preview validado</span>
+            <p>Confira os slides e, quando estiver tudo certo, siga para envio no Postiz.</p>
+          </article>
+          <div className="download-actions">
+            <a className="action-button main-action" href={`${apiBase}/api/runs/${run.runId}/slides/${slide.index}/download`} target="_blank" rel="noreferrer">
+              <Download size={18} />
+              Baixar slide atual
+            </a>
+            <a className="action-button ghost-action" href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
+              <Download size={18} />
+              Baixar ZIP completo
+            </a>
+          </div>
+          <button className="action-button main-action huge-action" type="button" onClick={onContinue}>
+            <ArrowRight size={18} />
+            Ir para publicar no Postiz
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function App() {
   const [url, setUrl] = useState(sampleUrl);
   const [status, setStatus] = useState("Pronto para começar.");
@@ -1007,6 +1050,7 @@ export function App() {
   const [draftCaptionPortuguese, setDraftCaptionPortuguese] = useState("");
   const [draftHashtags, setDraftHashtags] = useState("");
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
+  const [previewIndex, setPreviewIndex] = useState(0);
   const [replacementFiles, setReplacementFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
@@ -1072,10 +1116,12 @@ export function App() {
         draftCaptionEnglish,
         draftCaptionPortuguese,
         draftHashtags,
-        currentReviewIndex,        updatedAt: new Date().toISOString(),
+        currentReviewIndex,
+        previewIndex,
+        updatedAt: new Date().toISOString(),
       })
     );
-  }, [run?.runId, draftSlides, draftCaptionEnglish, draftCaptionPortuguese, draftHashtags, currentReviewIndex ]);
+  }, [run?.runId, draftSlides, draftCaptionEnglish, draftCaptionPortuguese, draftHashtags, currentReviewIndex, previewIndex]);
 
   useEffect(() => {
     if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
@@ -1129,6 +1175,7 @@ export function App() {
     setDraftCaptionPortuguese("");
     setDraftHashtags("");
     setCurrentReviewIndex(0);
+    setPreviewIndex(0);
     setReplacementFiles([]);
     setSelectedStage("extract");
   }
@@ -1151,6 +1198,7 @@ export function App() {
     setDraftCaptionPortuguese(nextRun.captionPortuguese || "");
     setDraftHashtags(hashtagsToText(nextRun.hashtags));
     setCurrentReviewIndex(0);
+    setPreviewIndex(0);
     setReplacementFiles([]);
     setSelectedStage(nextStage);
 
@@ -1168,6 +1216,7 @@ export function App() {
     setDraftCaptionPortuguese(savedDraft.draftCaptionPortuguese || "");
     setDraftHashtags(savedDraft.draftHashtags || "");
     setCurrentReviewIndex(Number(savedDraft.currentReviewIndex || 0));
+    setPreviewIndex(Number(savedDraft.previewIndex || 0));
   }
 
   async function loadProjects() {
@@ -1397,7 +1446,7 @@ export function App() {
       const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
       const renderData = await readJsonResponse(renderResponse, "Nao consegui gerar o preview final.");
       if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui gerar o preview final.");
-      hydrateRun(renderData, { stage: "publish", replaceRoute: true });
+      hydrateRun(renderData, { stage: "preview", replaceRoute: true });
       setStatus("Preview pronto. Agora siga para publicar.");
       loadProjects();
     } catch (requestError) {
@@ -1548,7 +1597,22 @@ export function App() {
             onUpload={uploadReplacementImages}
             uploading={uploadingImages}
           />
-        )}`r`n        {activeStage === "publish" && run && (
+        )}
+
+        {activeStage === "preview" && run && (
+          <PreviewStage
+            run={run}
+            activeIndex={previewIndex}
+            setActiveIndex={setPreviewIndex}
+            onContinue={() => {
+              setRun({ ...run, stage: "publish" });
+              setSelectedStage("publish");
+              loadPostizAccounts();
+            }}
+          />
+        )}
+
+        {activeStage === "publish" && run && (
           <PublishStage
             run={run}
             accounts={accounts}
@@ -1570,6 +1634,7 @@ export function App() {
     </main>
   );
 }
+
 
 
 

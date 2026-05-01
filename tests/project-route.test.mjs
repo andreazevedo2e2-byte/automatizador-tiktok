@@ -24,7 +24,8 @@ describe("project routes", () => {
 
 describe("unlocked stages", () => {
   it("unlocks all previous project stages", () => {
-    expect(getUnlockedProjectStages("publish")).toEqual(["review", "images", "publish"]);
+    expect(getUnlockedProjectStages("preview")).toEqual(["review", "images", "preview"]);
+    expect(getUnlockedProjectStages("publish")).toEqual(["review", "images", "preview", "publish"]);
   });
 
   it("returns extract fallback for invalid stages", () => {
