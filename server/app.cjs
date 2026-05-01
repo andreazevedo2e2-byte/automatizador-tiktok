@@ -118,6 +118,14 @@ function createApp(config = {}) {
     }
   });
 
+  app.get("/api/projects", async (_req, res) => {
+    try {
+      res.json({ items: await store.listRuns() });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not load projects." });
+    }
+  });
+
   app.get("/api/postiz/health", async (_req, res) => {
     try {
       const accounts = await services.postiz.listTikTokAccounts();
@@ -177,6 +185,15 @@ function createApp(config = {}) {
       res.json(buildRunResponse(run));
     } catch {
       res.status(404).json({ error: "Run not found." });
+    }
+  });
+
+  app.delete("/api/runs/:runId", async (req, res) => {
+    try {
+      await store.deleteRun(req.params.runId);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not delete run." });
     }
   });
 

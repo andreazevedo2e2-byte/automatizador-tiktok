@@ -158,5 +158,15 @@ describe("app flow", () => {
 
     const history = await request(app).get("/api/history").expect(200);
     expect(history.body.items[0].destinations).toHaveLength(2);
+
+    const projects = await request(app).get("/api/projects").expect(200);
+    expect(projects.body.items[0]).toMatchObject({
+      runId,
+      slideCount: 2,
+      stage: "publish",
+    });
+
+    await request(app).delete(`/api/runs/${runId}`).expect(200);
+    await request(app).get(`/api/runs/${runId}`).expect(404);
   });
 });

@@ -41,6 +41,43 @@ function createRunStore(rootDir) {
     return JSON.parse(raw);
   }
 
+  async function listRuns() {
+    let entries = [];
+    try {
+      entries = await fs.readdir(runsDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+
+    const runs = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith("_")) continue;
+      try {
+        const manifestPath = getManifestPath(entry.name);
+        const [run, stats] = await Promise.all([loadRun(entry.name), fs.stat(manifestPath)]);
+        runs.push({
+          runId: run.runId,
+          sourceUrl: run.sourceUrl,
+          stage: run.stage,
+          captionPortuguese: run.captionPortuguese || "",
+          captionEnglish: run.captionEnglish || "",
+          hashtags: run.hashtags || [],
+          slideCount: Array.isArray(run.slides) ? run.slides.length : 0,
+          updatedAt: stats.mtime.toISOString(),
+          createdAt: run.createdAt || run.runId,
+        });
+      } catch {
+        // Ignore incomplete run folders.
+      }
+    }
+
+    return runs.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  }
+
+  async function deleteRun(runId) {
+    await fs.rm(getRunDir(runId), { recursive: true, force: true });
+  }
+
   async function updateRun(runId, updater) {
     const current = await loadRun(runId);
     const next = typeof updater === "function" ? await updater(current) : { ...current, ...updater };
@@ -55,6 +92,8 @@ function createRunStore(rootDir) {
     getRunDir,
     getSlidesDir,
     getUploadsDir,
+    deleteRun,
+    listRuns,
     loadRun,
     runsDir,
     saveRun,

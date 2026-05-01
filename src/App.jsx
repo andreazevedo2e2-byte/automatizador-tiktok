@@ -18,6 +18,8 @@ import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
 const apiBase = envApiBase || productionApiBase;
+const currentRunStorageKey = "automatizador-tiktok.currentRunId";
+const draftStorageKey = "automatizador-tiktok.draft";
 const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 
@@ -64,6 +66,13 @@ function textToHashtags(input) {
 function getActiveStage(run) {
   if (!run) return "extract";
   return stageByRun[run.stage] || "review";
+}
+
+function projectTitle(project) {
+  const caption = project.captionPortuguese || project.captionEnglish || "";
+  if (caption.trim()) return caption.trim().slice(0, 54);
+  const handle = String(project.sourceUrl || "").match(/@([^/]+)/)?.[1];
+  return handle ? `Post @${handle}` : `Projeto ${project.runId}`;
 }
 
 function copyText(value) {
@@ -247,6 +256,60 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots 
       <div className="soft-note">
         <Sparkles size={18} />
         <span>O fluxo é local: extrai, revisa, troca as imagens, gera preview e baixa ZIP.</span>
+      </div>
+    </section>
+  );
+}
+
+function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
+  if (loading) {
+    return (
+      <section className="project-shelf">
+        <div className="shelf-title">
+          <span>Projetos salvos</span>
+          <small>Carregando...</small>
+        </div>
+      </section>
+    );
+  }
+
+  if (!projects.length) {
+    return (
+      <section className="project-shelf empty-shelf">
+        <div className="shelf-title">
+          <span>Projetos salvos</span>
+          <small>Seus posts vão aparecer aqui automaticamente.</small>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="project-shelf">
+      <div className="shelf-title">
+        <span>Projetos salvos</span>
+        <small>Continue de onde parou.</small>
+      </div>
+      <div className="project-grid">
+        {projects.map((project, index) => (
+          <article className="project-card" key={project.runId}>
+            <div>
+              <span>Post {index + 1}</span>
+              <strong>{projectTitle(project)}</strong>
+              <small>
+                {project.slideCount || 0} slides · {steps[stageIndex[stageByRun[project.stage] || project.stage] || 0]?.title || "Rascunho"}
+              </small>
+            </div>
+            <div className="project-actions">
+              <button className="action-button main-action" type="button" onClick={() => onOpenProject(project.runId)}>
+                Abrir
+              </button>
+              <button className="action-button danger-action" type="button" onClick={() => onDeleteProject(project.runId)}>
+                Excluir
+              </button>
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -671,6 +734,8 @@ export function App() {
   const [accounts, setAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
 
   const activeStage = getActiveStage(run);
   const replacementPreviews = useMemo(
@@ -688,6 +753,29 @@ export function App() {
       replacementPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
     };
   }, [replacementPreviews]);
+
+  useEffect(() => {
+    loadProjects();
+    restoreLastProject();
+  }, []);
+
+  useEffect(() => {
+    if (!run?.runId) return;
+    localStorage.setItem(currentRunStorageKey, run.runId);
+    localStorage.setItem(
+      draftStorageKey,
+      JSON.stringify({
+        runId: run.runId,
+        draftSlides,
+        draftCaptionEnglish,
+        draftCaptionPortuguese,
+        draftHashtags,
+        currentReviewIndex,
+        previewIndex,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  }, [run?.runId, draftSlides, draftCaptionEnglish, draftCaptionPortuguese, draftHashtags, currentReviewIndex, previewIndex]);
 
   useEffect(() => {
     if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
@@ -736,6 +824,77 @@ export function App() {
     setReplacementFiles([]);
   }
 
+  function applySavedDraft(savedDraft) {
+    if (!savedDraft) return;
+    if (Array.isArray(savedDraft.draftSlides) && savedDraft.draftSlides.length) {
+      setDraftSlides(savedDraft.draftSlides);
+    }
+    setDraftCaptionEnglish(savedDraft.draftCaptionEnglish || "");
+    setDraftCaptionPortuguese(savedDraft.draftCaptionPortuguese || "");
+    setDraftHashtags(savedDraft.draftHashtags || "");
+    setCurrentReviewIndex(Number(savedDraft.currentReviewIndex || 0));
+    setPreviewIndex(Number(savedDraft.previewIndex || 0));
+  }
+
+  async function loadProjects() {
+    setLoadingProjects(true);
+    try {
+      const response = await fetch(`${apiBase}/api/projects`);
+      const data = await readJsonResponse(response, "Não consegui carregar seus projetos.");
+      if (!response.ok) throw new Error(data.error || "Não consegui carregar seus projetos.");
+      setProjects(data.items || []);
+    } catch (requestError) {
+      console.warn("[projects] load failed", requestError);
+    } finally {
+      setLoadingProjects(false);
+    }
+  }
+
+  async function openProject(runId, { silent = false } = {}) {
+    if (!runId) return;
+    setError("");
+    if (!silent) setStatus("Abrindo projeto salvo...");
+    try {
+      const response = await fetch(`${apiBase}/api/runs/${runId}`);
+      const data = await readJsonResponse(response, "Não consegui abrir esse projeto.");
+      if (!response.ok) throw new Error(data.error || "Projeto não encontrado.");
+      hydrateRun(data);
+      const savedDraft = JSON.parse(localStorage.getItem(draftStorageKey) || "null");
+      if (savedDraft?.runId === runId) applySavedDraft(savedDraft);
+      localStorage.setItem(currentRunStorageKey, runId);
+      setStatus(silent ? "Projeto restaurado automaticamente." : "Projeto aberto. Pode continuar de onde parou.");
+    } catch (requestError) {
+      if (!silent) setError(requestError.message);
+      localStorage.removeItem(currentRunStorageKey);
+    }
+  }
+
+  async function restoreLastProject() {
+    const runId = localStorage.getItem(currentRunStorageKey);
+    if (runId) await openProject(runId, { silent: true });
+  }
+
+  async function deleteProject(runId) {
+    const confirmed = window.confirm("Excluir este projeto salvo? Essa ação remove os arquivos desta run.");
+    if (!confirmed) return;
+    setError("");
+    try {
+      const response = await fetch(`${apiBase}/api/runs/${runId}`, { method: "DELETE" });
+      const data = await readJsonResponse(response, "Não consegui excluir esse projeto.");
+      if (!response.ok) throw new Error(data.error || "Não consegui excluir esse projeto.");
+      if (run?.runId === runId) {
+        setRun(null);
+        setDraftSlides([]);
+        localStorage.removeItem(currentRunStorageKey);
+        localStorage.removeItem(draftStorageKey);
+      }
+      setProjects((items) => items.filter((project) => project.runId !== runId));
+      setStatus("Projeto excluído.");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   async function extractPost() {
     setError("");
     setExtracting(true);
@@ -751,6 +910,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui extrair esse post.");
       hydrateRun(data);
       setStatus(`${data.slides.length} slides prontos para revisar.`);
+      loadProjects();
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Extração não concluída.");
@@ -775,6 +935,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui ler esses prints.");
       hydrateRun(data);
       setStatus(`${data.slides.length} slides prontos para revisar.`);
+      loadProjects();
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Leitura dos prints não concluída.");
@@ -834,6 +995,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui salvar a revisão.");
       hydrateRun(data);
       setStatus("Revisão salva. Agora envie suas imagens.");
+      loadProjects();
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Revisão não salva.");
@@ -905,6 +1067,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
       hydrateRun(data);
       setStatus("Imagens salvas. Pode gerar o preview.");
+      loadProjects();
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Upload não concluído.");
@@ -926,6 +1089,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui gerar o preview.");
       hydrateRun(data);
       setStatus("Preview pronto para baixar.");
+      loadProjects();
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Preview não gerado.");
@@ -981,6 +1145,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui enviar ao Postiz.");
       hydrateRun(data.run);
       setStatus("Rascunho enviado. Confira no Postiz/TikTok antes de publicar.");
+      loadProjects();
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Envio ao Postiz não concluído.");
@@ -1004,13 +1169,16 @@ export function App() {
         )}
 
         {activeStage === "extract" && (
-          <ExtractStage
-            url={url}
-            setUrl={setUrl}
-            extracting={extracting}
-            onExtract={extractPost}
-            onUploadScreenshots={uploadScreenshots}
-          />
+          <>
+            <ExtractStage
+              url={url}
+              setUrl={setUrl}
+              extracting={extracting}
+              onExtract={extractPost}
+              onUploadScreenshots={uploadScreenshots}
+            />
+            <ProjectShelf projects={projects} loading={loadingProjects} onOpenProject={openProject} onDeleteProject={deleteProject} />
+          </>
         )}
 
         {activeStage === "review" && run && (

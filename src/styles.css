@@ -313,6 +313,10 @@ h2 {
   gap: 24px;
 }
 
+.extract-stage {
+  min-height: min(620px, calc(100vh - 150px));
+}
+
 .extract-box {
   display: grid;
   gap: 16px;
@@ -417,6 +421,12 @@ textarea:focus {
   background: transparent;
 }
 
+.danger-action {
+  border-color: rgba(255, 113, 113, 0.34);
+  background: rgba(255, 113, 113, 0.08);
+  color: #ffd2d2;
+}
+
 .huge-action {
   width: fit-content;
   min-height: 60px;
@@ -440,6 +450,88 @@ button:disabled,
   border: 1px solid rgba(255, 135, 88, 0.24);
   border-radius: 999px;
   background: rgba(255, 135, 88, 0.08);
+}
+
+.project-shelf {
+  position: relative;
+  z-index: 1;
+  margin: 0 18px 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow);
+}
+
+.shelf-title {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.shelf-title span {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.shelf-title small,
+.project-card small {
+  color: var(--muted);
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.project-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.project-card span,
+.project-card strong,
+.project-card small {
+  display: block;
+}
+
+.project-card span {
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.project-card strong {
+  margin: 4px 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.project-actions .action-button {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 14px;
+  font-size: 13px;
 }
 
 .review-stage {
@@ -1368,6 +1460,27 @@ button:disabled,
   .post-meta-panel,
   .generate-board {
     grid-template-columns: 1fr;
+  }
+
+  .project-shelf {
+    margin: 0 10px 10px;
+    padding: 14px;
+    border-radius: 22px;
+  }
+
+  .shelf-title,
+  .project-card {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .shelf-title {
+    display: grid;
+  }
+
+  .project-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   .phone-preview {
