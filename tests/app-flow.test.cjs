@@ -28,6 +28,7 @@ describe("app flow", () => {
 
     app = createApp({
       rootDir,
+      publishStoreConfig: { disableSupabase: true },
       services: {
         captureSlidesViaSnapTik: async (_url, slidesDir) => {
           await fs.mkdir(slidesDir, { recursive: true });
@@ -76,6 +77,16 @@ describe("app flow", () => {
         }),
         translateTexts: async ({ texts, from, to }) =>
           texts.map((text) => `[${from}->${to}] ${text}`),
+        postiz: {
+          listTikTokAccounts: async () => [
+            { id: "tt-1", provider: "tiktok", name: "Account One", handle: "one", picture: "", disabled: false },
+            { id: "tt-2", provider: "tiktok", name: "Account Two", handle: "two", picture: "", disabled: false },
+          ],
+          createTikTokDraft: async ({ accountId }) => ({
+            uploads: [{ id: "media-1", path: "https://cdn.test/slide.jpg" }],
+            posts: [{ postId: `post-${accountId}`, integration: accountId }],
+          }),
+        },
       },
     });
   });
@@ -125,5 +136,27 @@ describe("app flow", () => {
     const zip = await request(app).get(`/api/runs/${runId}/export.zip`).expect(200);
     expect(zip.headers["content-type"]).toContain("application/zip");
     expect(Number(zip.headers["content-length"] || 0)).toBeGreaterThan(2000);
+
+    const accounts = await request(app).get("/api/postiz/accounts").expect(200);
+    expect(accounts.body.accounts).toHaveLength(2);
+
+    const queue = await request(app)
+      .post(`/api/runs/${runId}/postiz/queue`)
+      .send({
+        destinations: [
+          { accountId: "tt-1", accountName: "Account One", accountHandle: "one" },
+          { accountId: "tt-2", accountName: "Account Two", accountHandle: "two" },
+        ],
+      })
+      .expect(200);
+
+    expect(queue.body.run.stage).toBe("publish");
+    expect(queue.body.destinations.map((destination) => destination.status)).toEqual([
+      "waiting_manual_publish",
+      "waiting_manual_publish",
+    ]);
+
+    const history = await request(app).get("/api/history").expect(200);
+    expect(history.body.items[0].destinations).toHaveLength(2);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeReplacementFiles } from "../src/replacement-files.js";
+import { mergeReplacementFiles, moveReplacementFile } from "../src/replacement-files.js";
 
 function file(name, type = "image/jpeg") {
   return { name, type };
@@ -27,5 +27,11 @@ describe("replacement image queue", () => {
 
     expect(result.files.map((entry) => entry.name)).toEqual(["slide.jpg"]);
     expect(result.invalidCount).toBe(1);
+  });
+
+  it("moves images so the user can reorder slide output", () => {
+    const result = moveReplacementFile([file("01.jpg"), file("02.jpg"), file("03.jpg")], 2, 0);
+
+    expect(result.map((entry) => entry.name)).toEqual(["03.jpg", "01.jpg", "02.jpg"]);
   });
 });

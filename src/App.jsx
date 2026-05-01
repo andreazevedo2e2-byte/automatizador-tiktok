@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  CalendarClock,
   Check,
   Clipboard,
   Download,
@@ -7,11 +8,12 @@ import {
   Loader2,
   Play,
   ScanText,
+  Send,
   Sparkles,
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { mergeReplacementFiles } from "./replacement-files.js";
+import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.js";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
@@ -25,6 +27,7 @@ const steps = [
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
   { key: "generate", number: "04", title: "Gerar", hint: "Aplicar legendas" },
   { key: "download", number: "05", title: "Baixar", hint: "Slides e ZIP" },
+  { key: "publish", number: "06", title: "Publicar", hint: "Postiz e contas" },
 ];
 
 const stageByRun = {
@@ -32,6 +35,7 @@ const stageByRun = {
   images: "images",
   render: "generate",
   preview: "download",
+  publish: "publish",
 };
 
 const stageIndex = Object.fromEntries(steps.map((step, index) => [step.key, index]));
@@ -326,7 +330,7 @@ function ReviewStage({
   );
 }
 
-function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onClearFiles, previews, onUpload, uploading }) {
+function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFile, onClearFiles, previews, onUpload, uploading }) {
   const inputRef = useRef(null);
   const expected = run.slides.length;
   const ready = selectedFiles.length === expected;
@@ -383,9 +387,17 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onClearFi
             {preview ? (
               <>
                 <img src={preview.url} alt={`Nova imagem ${index + 1}`} />
-                <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading} aria-label={`Remover imagem ${index + 1}`}>
-                  Remover
-                </button>
+                <div className="image-slot-card__actions">
+                  <button type="button" onClick={() => onMoveFile(index, index - 1)} disabled={uploading || index === 0}>
+                    ←
+                  </button>
+                  <button type="button" onClick={() => onMoveFile(index, index + 1)} disabled={uploading || index === selectedFiles.length - 1}>
+                    →
+                  </button>
+                  <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading} aria-label={`Remover imagem ${index + 1}`}>
+                    Remover
+                  </button>
+                </div>
               </>
             ) : (
               <div>
@@ -444,7 +456,7 @@ function GenerateStage({ run, onRender, rendering }) {
   );
 }
 
-function DownloadStage({ run, activeIndex, setActiveIndex }) {
+function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
   const slide = run.slides[activeIndex];
   const caption = run.captionPortuguese || run.captionEnglish || "";
   const hashtags = hashtagsToText(run.hashtags);
@@ -479,6 +491,10 @@ function DownloadStage({ run, activeIndex, setActiveIndex }) {
               <Download size={18} />
               Baixar ZIP completo
             </a>
+            <button className="action-button main-action" type="button" onClick={onContinue}>
+              <Send size={18} />
+              Publicar no Postiz
+            </button>
           </div>
 
           {hasContent(caption) && (
@@ -508,6 +524,125 @@ function DownloadStage({ run, activeIndex, setActiveIndex }) {
   );
 }
 
+function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onConnectPostiz, onQueue, publishing }) {
+  const [selectedIds, setSelectedIds] = useState(() => new Set((run.destinations || []).map((destination) => destination.accountId)));
+  const [scheduledAt, setScheduledAt] = useState("");
+  const caption = [run.captionEnglish, hashtagsToText(run.hashtags)].filter(Boolean).join(" ").trim();
+
+  useEffect(() => {
+    setSelectedIds(new Set((run.destinations || []).map((destination) => destination.accountId)));
+  }, [run.runId]);
+
+  function toggleAccount(accountId) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(accountId)) next.delete(accountId);
+      else next.add(accountId);
+      return next;
+    });
+  }
+
+  const destinations = accounts
+    .filter((account) => selectedIds.has(account.id))
+    .map((account) => ({
+      accountId: account.id,
+      accountName: account.name,
+      accountHandle: account.handle,
+      scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+    }));
+
+  return (
+    <section className="stage-card publish-stage">
+      <div className="publish-layout">
+        <div className="stage-copy">
+          <p className="stage-label">Etapa 06</p>
+          <h2>Enviar para o Postiz</h2>
+          <p>
+            Selecione as contas TikTok, defina um horário opcional e envie como rascunho seguro. Depois você finaliza no
+            app do TikTok.
+          </p>
+          <div className="safe-mode-card">
+            <CalendarClock size={22} />
+            <div>
+              <strong>Modo seguro ativado</strong>
+              <span>O app cria rascunho/upload no Postiz, não publicação direta automática.</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="publish-panel">
+          <div className="publish-panel__header">
+            <strong>Contas TikTok</strong>
+            <button className="action-button quiet-action" type="button" onClick={onRefreshAccounts} disabled={loadingAccounts}>
+              {loadingAccounts ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
+              Atualizar
+            </button>
+          </div>
+
+          {!accounts.length && (
+            <div className="empty-publish">
+              <p>Nenhuma conta TikTok carregada. Conecte o Postiz uma vez e depois escolha as contas.</p>
+              <button className="action-button main-action" type="button" onClick={onConnectPostiz}>
+                <Send size={16} />
+                Conectar Postiz
+              </button>
+            </div>
+          )}
+
+          <div className="account-grid">
+            {accounts.map((account) => (
+              <button
+                className={`account-card ${selectedIds.has(account.id) ? "selected" : ""}`}
+                key={account.id}
+                type="button"
+                onClick={() => toggleAccount(account.id)}
+              >
+                {account.picture ? <img src={account.picture} alt="" /> : <span>{(account.name || "T").slice(0, 1)}</span>}
+                <div>
+                  <strong>{account.name || "TikTok"}</strong>
+                  <small>{account.handle ? `@${account.handle}` : account.id}</small>
+                </div>
+                <Check size={18} />
+              </button>
+            ))}
+          </div>
+
+          <label className="input-group">
+            <span>Horário opcional</span>
+            <input type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
+          </label>
+
+          <article className="script-card compact-script">
+            <span>Legenda final em inglês</span>
+            <p>{caption || "Sem legenda detectada."}</p>
+          </article>
+
+          {!!run.destinations?.length && (
+            <div className="destination-status-list">
+              {run.destinations.map((destination) => (
+                <div key={destination.accountId}>
+                  <strong>{destination.accountName || destination.accountHandle || destination.accountId}</strong>
+                  <span>{destination.status === "waiting_manual_publish" ? "Rascunho enviado" : destination.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            className="action-button main-action huge-action"
+            type="button"
+            onClick={() => onQueue(destinations)}
+            disabled={publishing || !destinations.length}
+          >
+            {publishing ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+            Enviar rascunho para {destinations.length || 0} conta(s)
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function App() {
   const [url, setUrl] = useState(sampleUrl);
   const [status, setStatus] = useState("Pronto para começar.");
@@ -524,6 +659,9 @@ export function App() {
   const [savingReview, setSavingReview] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const activeStage = getActiveStage(run);
   const replacementPreviews = useMemo(
@@ -541,6 +679,42 @@ export function App() {
       replacementPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
     };
   }, [replacementPreviews]);
+
+  useEffect(() => {
+    if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
+      loadPostizAccounts();
+    }
+  }, [activeStage]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    const oauthError = params.get("error");
+    if (window.location.pathname !== "/callback" || (!code && !oauthError)) return;
+
+    async function finishPostizOAuth() {
+      setStatus("Conectando Postiz...");
+      setError("");
+      try {
+        const response = await fetch(`${apiBase}/api/postiz/oauth/callback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, state, error: oauthError }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Não consegui conectar o Postiz.");
+        setAccounts(data.accounts || []);
+        setStatus("Postiz conectado. Volte para a etapa Publicar.");
+        window.history.replaceState({}, "", "/");
+      } catch (requestError) {
+        setError(requestError.message);
+        setStatus("Postiz não conectado.");
+      }
+    }
+
+    finishPostizOAuth();
+  }, []);
 
   function hydrateRun(nextRun) {
     setRun(nextRun);
@@ -688,6 +862,12 @@ export function App() {
     setStatus("Imagem removida da fila.");
   }
 
+  function moveReplacementImage(fromIndex, toIndex) {
+    setReplacementFiles((current) => moveReplacementFile(current, fromIndex, toIndex));
+    setError("");
+    setStatus("Ordem das imagens ajustada.");
+  }
+
   function clearReplacementFiles() {
     setReplacementFiles([]);
     setError("");
@@ -745,6 +925,61 @@ export function App() {
     }
   }
 
+  async function loadPostizAccounts() {
+    setLoadingAccounts(true);
+    setError("");
+    try {
+      const response = await fetch(`${apiBase}/api/postiz/accounts`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui carregar as contas do Postiz.");
+      setAccounts(data.accounts || []);
+      setStatus(data.accounts?.length ? `${data.accounts.length} conta(s) TikTok carregada(s).` : "Nenhuma conta TikTok encontrada no Postiz.");
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Postiz ainda não conectado.");
+    } finally {
+      setLoadingAccounts(false);
+    }
+  }
+
+  async function connectPostiz() {
+    setError("");
+    setStatus("Abrindo autorização do Postiz...");
+    try {
+      const response = await fetch(`${apiBase}/api/postiz/oauth/start`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui iniciar a conexão com Postiz.");
+      window.location.href = data.authorizeUrl;
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Conexão com Postiz não iniciada.");
+    }
+  }
+
+  async function queuePostizDraft(destinations) {
+    if (!run) return;
+    setPublishing(true);
+    setError("");
+    setStatus("Enviando rascunho para o Postiz...");
+
+    try {
+      const response = await fetch(`${apiBase}/api/runs/${run.runId}/postiz/queue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ destinations }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui enviar ao Postiz.");
+      hydrateRun(data.run);
+      setStatus("Rascunho enviado. Confira no Postiz/TikTok antes de publicar.");
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Envio ao Postiz não concluído.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <StepRail activeStage={activeStage} />
@@ -791,6 +1026,7 @@ export function App() {
             selectedFiles={replacementFiles}
             onSelectFiles={selectReplacementFiles}
             onRemoveFile={removeReplacementFile}
+            onMoveFile={moveReplacementImage}
             onClearFiles={clearReplacementFiles}
             previews={replacementPreviews}
             onUpload={uploadReplacementImages}
@@ -800,9 +1036,31 @@ export function App() {
 
         {activeStage === "generate" && run && <GenerateStage run={run} onRender={renderSlideshow} rendering={rendering} />}
 
-        {activeStage === "download" && run && <DownloadStage run={run} activeIndex={previewIndex} setActiveIndex={setPreviewIndex} />}
+        {activeStage === "download" && run && (
+          <DownloadStage
+            run={run}
+            activeIndex={previewIndex}
+            setActiveIndex={setPreviewIndex}
+            onContinue={() => {
+              setRun({ ...run, stage: "publish" });
+              loadPostizAccounts();
+            }}
+          />
+        )}
 
-        {(extracting || savingReview || uploadingImages || rendering) && (
+        {activeStage === "publish" && run && (
+          <PublishStage
+            run={run}
+            accounts={accounts}
+            loadingAccounts={loadingAccounts}
+            onRefreshAccounts={loadPostizAccounts}
+            onConnectPostiz={connectPostiz}
+            onQueue={queuePostizDraft}
+            publishing={publishing}
+          />
+        )}
+
+        {(extracting || savingReview || uploadingImages || rendering || publishing) && (
           <div className="work-overlay">
             <LoadingIcon active />
             <span>{status}</span>

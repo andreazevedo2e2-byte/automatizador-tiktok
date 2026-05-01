@@ -9,6 +9,14 @@ const JSZip = require("jszip");
 
 const { compositeSlide } = require("./lib/compositor.cjs");
 const { createOcrRunner } = require("./lib/ocr.cjs");
+const {
+  buildPostizAuthorizeUrl,
+  createPostizClient,
+  exchangePostizOAuthCode,
+  randomOAuthState,
+} = require("./lib/postiz-client.cjs");
+const { createPostizTokenStore } = require("./lib/postiz-token-store.cjs");
+const { createPublishStore, normalizeDestination, normalizePostStatus } = require("./lib/publish-store.cjs");
 const { createRunStore } = require("./lib/run-store.cjs");
 const {
   buildCaptionEnglish,
@@ -37,6 +45,7 @@ function buildRunResponse(run) {
     captionPortuguese: run.captionPortuguese,
     hashtags: run.hashtags || [],
     export: run.export || null,
+    destinations: run.destinations || [],
     slides: run.slides,
   };
 }
@@ -45,6 +54,8 @@ function createApp(config = {}) {
   const app = express();
   const rootDir = config.rootDir || path.resolve(__dirname, "..");
   const store = config.store || createRunStore(rootDir);
+  const publishStore = config.publishStore || createPublishStore(config.publishStoreConfig);
+  const postizTokenStore = config.postizTokenStore || createPostizTokenStore(rootDir);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const port = Number(process.env.PORT || 4141);
   const host = process.env.HOST || "0.0.0.0";
@@ -63,6 +74,7 @@ function createApp(config = {}) {
     captureSlidesViaSnapTik,
     translateTexts,
     runOcr: createOcrRunner(rootDir),
+    postiz: createPostizClient({ tokenStore: postizTokenStore, ...config.postizConfig }),
     ...config.services,
   };
 
@@ -86,6 +98,67 @@ function createApp(config = {}) {
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, mode: "preview-and-zip", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
+  });
+
+  app.get("/api/history", async (_req, res) => {
+    try {
+      res.json({ items: await publishStore.listHistory() });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not load history." });
+    }
+  });
+
+  app.get("/api/postiz/health", async (_req, res) => {
+    try {
+      const accounts = await services.postiz.listTikTokAccounts();
+      res.json({ ok: true, accounts });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message || "Postiz is not configured." });
+    }
+  });
+
+  app.get("/api/postiz/accounts", async (_req, res) => {
+    try {
+      res.json({ accounts: await services.postiz.listTikTokAccounts() });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not list Postiz accounts." });
+    }
+  });
+
+  app.get("/api/postiz/oauth/start", async (_req, res) => {
+    try {
+      const state = randomOAuthState();
+      await postizTokenStore.saveState(state);
+      res.json({
+        authorizeUrl: buildPostizAuthorizeUrl({
+          frontendUrl: process.env.POSTIZ_FRONTEND_URL || "https://platform.postiz.com",
+          clientId: process.env.POSTIZ_CLIENT_ID,
+          state,
+        }),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not start Postiz OAuth." });
+    }
+  });
+
+  app.post("/api/postiz/oauth/callback", async (req, res) => {
+    try {
+      const { code, state, error } = req.body || {};
+      if (error) throw new Error(`Postiz authorization denied: ${error}`);
+      const validState = await postizTokenStore.consumeState(state);
+      if (!validState) throw new Error("Postiz OAuth state inválido. Inicie a conexão novamente.");
+
+      const token = await exchangePostizOAuthCode({
+        apiUrl: process.env.POSTIZ_API_URL || process.env.POSTIZ_URL || "https://api.postiz.com",
+        clientId: process.env.POSTIZ_CLIENT_ID,
+        clientSecret: process.env.POSTIZ_CLIENT_SECRET,
+        code,
+      });
+      await postizTokenStore.saveToken(token);
+      res.json({ ok: true, accounts: await services.postiz.listTikTokAccounts() });
+    } catch (callbackError) {
+      res.status(400).json({ error: callbackError.message || "Could not complete Postiz OAuth." });
+    }
   });
 
   app.get("/api/runs/:runId", async (req, res) => {
@@ -191,6 +264,7 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(run);
+      await publishStore.upsertRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
       console.error("[extract] request failed", error);
@@ -234,6 +308,7 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(run);
+      await publishStore.upsertRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
       res.status(400).json({ error: error.message || "Upload OCR failed." });
@@ -267,6 +342,7 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not save review." });
@@ -319,6 +395,7 @@ function createApp(config = {}) {
 
       const nextRun = { ...run, stage: "render", slides: nextSlides };
       await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not upload replacement images." });
@@ -363,9 +440,138 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Render failed." });
+    }
+  });
+
+  app.post("/api/runs/:runId/destinations", async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
+      const destinations = (req.body.destinations || [])
+        .map((destination) => normalizeDestination(run.runId, destination))
+        .filter((destination) => destination.accountId);
+      if (!destinations.length) throw new Error("Escolha pelo menos uma conta TikTok.");
+
+      const nextRun = {
+        ...run,
+        stage: "publish",
+        destinations,
+      };
+      await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
+      await publishStore.saveDestinations(run.runId, destinations);
+      await publishStore.recordEvent({
+        runId: run.runId,
+        type: "destinations_saved",
+        message: `${destinations.length} destino(s) selecionado(s).`,
+        details: { destinations },
+      });
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not save destinations." });
+    }
+  });
+
+  app.post("/api/runs/:runId/postiz/queue", async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
+      if (!run.slides.every((slide) => slide.renderedImagePath)) {
+        throw new Error("Gere o slideshow antes de enviar ao Postiz.");
+      }
+
+      const requestedDestinations = Array.isArray(req.body.destinations) && req.body.destinations.length
+        ? req.body.destinations
+        : run.destinations || [];
+      const destinations = requestedDestinations
+        .map((destination) => normalizeDestination(run.runId, destination))
+        .filter((destination) => destination.accountId);
+      if (!destinations.length) throw new Error("Escolha pelo menos uma conta TikTok.");
+
+      await publishStore.saveDestinations(run.runId, destinations);
+      const caption = [run.captionEnglish, ...(run.hashtags || [])].filter(Boolean).join(" ").trim();
+      const mediaFiles = run.slides.map((slide) => ({ filePath: slide.renderedImagePath }));
+      const results = [];
+      for (const destination of destinations) {
+        try {
+          const postizResult = await services.postiz.createTikTokDraft({
+            accountId: destination.accountId,
+            caption,
+            mediaFiles,
+            scheduledAt: destination.scheduledAt,
+            tags: req.body.tags || [],
+          });
+          const postizPostId = Array.isArray(postizResult.posts) ? postizResult.posts[0]?.postId : postizResult.posts?.postId;
+          const updated = {
+            ...destination,
+            status: "waiting_manual_publish",
+            postizPostId: postizPostId || null,
+            postizResponse: postizResult.posts,
+            error: null,
+          };
+          await publishStore.updateDestination(run.runId, destination.accountId, updated);
+          await publishStore.recordEvent({
+            runId: run.runId,
+            accountId: destination.accountId,
+            type: "sent_to_postiz",
+            message: `Rascunho enviado para ${destination.accountName || destination.accountHandle || destination.accountId}.`,
+            details: { postizPostId },
+          });
+          results.push(updated);
+        } catch (error) {
+          const failed = {
+            ...destination,
+            status: "failed",
+            error: error.message || "Postiz failed.",
+          };
+          await publishStore.updateDestination(run.runId, destination.accountId, failed);
+          await publishStore.recordEvent({
+            runId: run.runId,
+            accountId: destination.accountId,
+            type: "failed",
+            message: failed.error,
+          });
+          results.push(failed);
+        }
+      }
+
+      const nextRun = {
+        ...run,
+        stage: "publish",
+        destinations: results.map((destination) => ({
+          ...destination,
+          status: normalizePostStatus(destination.status),
+        })),
+      };
+      await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
+      res.json({ run: buildRunResponse(nextRun), destinations: nextRun.destinations });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not send to Postiz." });
+    }
+  });
+
+  app.put("/api/runs/:runId/destinations/:accountId/status", async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
+      const status = normalizePostStatus(req.body.status);
+      const destinations = (run.destinations || []).map((destination) =>
+        destination.accountId === req.params.accountId ? { ...destination, status, updatedAt: new Date().toISOString() } : destination
+      );
+      const nextRun = { ...run, destinations };
+      await store.saveRun(nextRun);
+      await publishStore.updateDestination(run.runId, req.params.accountId, { status });
+      await publishStore.recordEvent({
+        runId: run.runId,
+        accountId: req.params.accountId,
+        type: "status_changed",
+        message: `Status alterado para ${status}.`,
+      });
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not update status." });
     }
   });
 
