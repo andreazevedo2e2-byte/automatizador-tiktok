@@ -17,6 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { buildProjectRoute, getUnlockedProjectStages, parseProjectRoute } from "./project-route.mjs";
 import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.js";
+import { computeLayerDelta, estimateLayerFrameHeight } from "./editor-math.mjs";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
@@ -263,8 +264,8 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
 
 function EditableStoryPreview({ slide, layers, activeLayerId, onSelectLayer, onLayerMove, onPrev, onNext, slideIndex, total }) {
   const dragRef = useRef(null);
-  const backgroundUrl = assetUrl(slide?.replacementImageUrl || slide?.renderedImageUrl || slide?.sourceImageUrl);
-  const previewWidth = 360;
+  const screenRef = useRef(null);
+  const backgroundUrl = assetUrl(slide?.renderedImageUrl || slide?.replacementImageUrl || slide?.sourceImageUrl);
 
   function handlePointerDown(event, layer) {
     event.preventDefault();
@@ -279,9 +280,16 @@ function EditableStoryPreview({ slide, layers, activeLayerId, onSelectLayer, onL
   }
 
   function handlePointerMove(event) {
-    if (!dragRef.current) return;
-    const deltaX = ((event.clientX - dragRef.current.startClientX) / previewWidth) * 1080;
-    const deltaY = ((event.clientY - dragRef.current.startClientY) / (previewWidth * (16 / 9))) * 1920;
+    if (!dragRef.current || !screenRef.current) return;
+    const rect = screenRef.current.getBoundingClientRect();
+    const { deltaX, deltaY } = computeLayerDelta({
+      startClientX: dragRef.current.startClientX,
+      startClientY: dragRef.current.startClientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      previewWidth: rect.width,
+      previewHeight: rect.height,
+    });
     onLayerMove(dragRef.current.id, {
       x: Math.max(80, Math.min(1000, dragRef.current.startX + deltaX)),
       y: Math.max(120, Math.min(1800, dragRef.current.startY + deltaY)),
@@ -304,7 +312,13 @@ function EditableStoryPreview({ slide, layers, activeLayerId, onSelectLayer, onL
           <span>{slide ? `Slide ${slide.index}` : "Editor"}</span>
           <span>{total ? `${slideIndex + 1}/${total}` : "0/0"}</span>
         </div>
-        <div className="phone-screen editor-screen" onPointerMove={handlePointerMove} onPointerUp={stopDrag} onPointerLeave={stopDrag}>
+        <div
+          className="phone-screen editor-screen"
+          ref={screenRef}
+          onPointerMove={handlePointerMove}
+          onPointerUp={stopDrag}
+          onPointerLeave={stopDrag}
+        >
           {total > 1 && (
             <div className="story-progress" aria-hidden="true">
               {Array.from({ length: total }).map((_, index) => (
@@ -323,17 +337,13 @@ function EditableStoryPreview({ slide, layers, activeLayerId, onSelectLayer, onL
                   left: `${(Number(layer.x || 540) / 1080) * 100}%`,
                   top: `${(Number(layer.y || 960) / 1920) * 100}%`,
                   width: `${(Number(layer.width || 900) / 1080) * 100}%`,
-                  color: layer.color || "#f8f3eb",
-                  WebkitTextStroke: `${Math.max(0, Number(layer.strokeWidth || 0)) * 0.18}px ${layer.strokeColor || "rgba(5, 6, 8, 0.55)"}`,
-                  fontFamily: layer.fontFamily || "sans-serif",
-                  fontSize: `${Math.max(18, (Number(layer.fontSize || 62) / 1080) * previewWidth)}px`,
-                  textAlign: layer.align || "center",
+                  minHeight: `${estimateLayerFrameHeight(layer)}%`,
                   display: layer.hidden ? "none" : "block",
                 }}
                 onClick={() => onSelectLayer(layer.id)}
                 onPointerDown={(event) => handlePointerDown(event, layer)}
               >
-                {layer.text || `Texto ${index + 1}`}
+                <span>{`Texto ${index + 1}`}</span>
               </button>
             ))}
           </div>
@@ -771,42 +781,6 @@ function EditStage({
               />
             </label>
             <div className="paint-grid">
-              <label className="input-group">
-                <span>Fonte</span>
-                <select value={selectedLayer.fontFamily || "sans-serif"} onChange={(event) => updateSelectedLayer("fontFamily", event.target.value)}>
-                  <option value="sans-serif">Sans</option>
-                  <option value="serif">Serif</option>
-                  <option value="monospace">Mono</option>
-                </select>
-              </label>
-              <label className="input-group">
-                <span>Alinhamento</span>
-                <select value={selectedLayer.align || "center"} onChange={(event) => updateSelectedLayer("align", event.target.value)}>
-                  <option value="left">Esquerda</option>
-                  <option value="center">Centro</option>
-                  <option value="right">Direita</option>
-                </select>
-              </label>
-              <label className="input-group">
-                <span>Tamanho ({Math.round(Number(selectedLayer.fontSize || 62))})</span>
-                <input
-                  type="range"
-                  min="28"
-                  max="120"
-                  value={Number(selectedLayer.fontSize || 62)}
-                  onChange={(event) => updateSelectedLayer("fontSize", Number(event.target.value))}
-                />
-              </label>
-              <label className="input-group">
-                <span>Contorno ({Math.round(Number(selectedLayer.strokeWidth || 14))})</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="24"
-                  value={Number(selectedLayer.strokeWidth || 14)}
-                  onChange={(event) => updateSelectedLayer("strokeWidth", Number(event.target.value))}
-                />
-              </label>
               <label className="input-group">
                 <span>Largura ({Math.round(Number(selectedLayer.width || 900))})</span>
                 <input
