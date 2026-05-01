@@ -7,7 +7,7 @@ const path = require("node:path");
 const multer = require("multer");
 const JSZip = require("jszip");
 
-const { compositeSlide } = require("./lib/compositor.cjs");
+const { compositeSlide, createDefaultLayer, normalizeLayer } = require("./lib/compositor.cjs");
 const { createOcrRunner } = require("./lib/ocr.cjs");
 const {
   buildPostizAuthorizeUrl,
@@ -48,6 +48,20 @@ function buildRunResponse(run) {
     destinations: run.destinations || [],
     slides: run.slides,
   };
+}
+
+function buildSlideLayers(slide, index, total) {
+  const fallbackText = slide.reviewedEnglish || slide.ocrEnglish || "";
+  const fallbackPosition = slide.preferredPosition || getSlidePosition(index, total);
+  const fallbackLayer = createDefaultLayer({ text: fallbackText, position: fallbackPosition });
+  if (!Array.isArray(slide.textLayers) || !slide.textLayers.length) {
+    return [fallbackLayer];
+  }
+  return slide.textLayers.map((layer) => normalizeLayer(layer, fallbackLayer));
+}
+
+function isPostizSubscriptionError(error) {
+  return /assinatura ativa|no existe uma assinatura|no subscription found/i.test(String(error?.message || ""));
 }
 
 function createApp(config = {}) {
@@ -139,6 +153,9 @@ function createApp(config = {}) {
     try {
       res.json({ accounts: await services.postiz.listTikTokAccounts() });
     } catch (error) {
+      if (isPostizSubscriptionError(error)) {
+        return res.json({ accounts: [], warning: error.message });
+      }
       res.status(400).json({ error: error.message || "Could not list Postiz accounts." });
     }
   });
@@ -173,7 +190,15 @@ function createApp(config = {}) {
         code,
       });
       await postizTokenStore.saveToken(token);
-      res.json({ ok: true, accounts: await services.postiz.listTikTokAccounts() });
+      try {
+        const accounts = await services.postiz.listTikTokAccounts();
+        res.json({ ok: true, accounts });
+      } catch (accountError) {
+        if (isPostizSubscriptionError(accountError)) {
+          return res.json({ ok: true, accounts: [], warning: accountError.message });
+        }
+        throw accountError;
+      }
     } catch (callbackError) {
       res.status(400).json({ error: callbackError.message || "Could not complete Postiz OAuth." });
     }
@@ -429,6 +454,39 @@ function createApp(config = {}) {
     }
   });
 
+  app.post("/api/runs/:runId/slides/:index/replacement", upload.single("image"), async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
+      const slideIndex = Number(req.params.index);
+      if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide invalido.");
+      const slide = run.slides.find((entry) => entry.index === slideIndex);
+      if (!slide) throw new Error("Slide nao encontrado.");
+      if (!req.file) throw new Error("Envie uma imagem para trocar o fundo.");
+
+      const extension = path.extname(req.file.originalname || "") || ".jpg";
+      const uploadPath = path.join(store.getUploadsDir(run.runId), `replacement-${String(slideIndex).padStart(2, "0")}${extension}`);
+      await fs.writeFile(uploadPath, req.file.buffer);
+
+      const nextSlides = run.slides.map((entry) =>
+        entry.index === slideIndex
+          ? {
+              ...entry,
+              replacementImagePath: uploadPath,
+              replacementImageUrl: `/runs/${run.runId}/uploads/${path.basename(uploadPath)}`,
+              status: "image-ready",
+            }
+          : entry
+      );
+
+      const nextRun = { ...run, slides: nextSlides };
+      await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not replace slide background." });
+    }
+  });
+
   app.post("/api/runs/:runId/render", async (req, res) => {
     try {
       const run = await store.loadRun(req.params.runId);
@@ -441,15 +499,18 @@ function createApp(config = {}) {
       for (const [index, slide] of run.slides.entries()) {
         const imageBuffer = await fs.readFile(slide.replacementImagePath);
         const outputPath = path.join(store.getRenderedDir(run.runId), `slide-${String(index + 1).padStart(2, "0")}.jpg`);
+        const textLayers = buildSlideLayers(slide, index, run.slides.length);
         await compositeSlide({
           imageBuffer,
           text: slide.reviewedEnglish || slide.ocrEnglish,
           outputPath,
           position: slide.preferredPosition || getSlidePosition(index, run.slides.length),
+          textLayers,
         });
 
         nextSlides.push({
           ...slide,
+          textLayers,
           renderedImagePath: outputPath,
           renderedImageUrl: `/runs/${run.runId}/rendered/${path.basename(outputPath)}`,
           status: "rendered",
@@ -577,6 +638,38 @@ function createApp(config = {}) {
       res.json({ run: buildRunResponse(nextRun), destinations: nextRun.destinations });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not send to Postiz." });
+    }
+  });
+
+  app.put("/api/runs/:runId/slides/:index/layers", async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
+      const slideIndex = Number(req.params.index);
+      if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
+      const layers = Array.isArray(req.body?.layers) ? req.body.layers : [];
+      if (!layers.length) throw new Error("Envie pelo menos uma camada de texto.");
+
+      const nextSlides = run.slides.map((slide, idx) => {
+        if (slide.index !== slideIndex) return slide;
+        const normalized = buildSlideLayers({ ...slide, textLayers: layers }, idx, run.slides.length);
+        return {
+          ...slide,
+          textLayers: normalized,
+          status: slide.renderedImagePath ? "render-ready" : slide.status,
+        };
+      });
+
+      const nextRun = {
+        ...run,
+        stage: run.stage === "publish" ? "preview" : run.stage,
+        slides: nextSlides,
+      };
+
+      await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not save text layers." });
     }
   });
 

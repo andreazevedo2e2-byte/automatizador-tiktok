@@ -21,7 +21,13 @@ function ensureConfigured(baseUrl, apiKey) {
 
 async function parseResponse(response, label) {
   if (!response.ok) {
-    throw new Error(`${label} failed ${response.status}: ${await response.text()}`);
+    const body = await response.text();
+    if (/no subscription found/i.test(body)) {
+      throw new Error(
+        "O Postiz autorizou a conta, mas a API respondeu que nao existe uma assinatura ativa para esse workspace. Abra o painel do Postiz e confirme se sua conta tem acesso ao produto/API."
+      );
+    }
+    throw new Error(`${label} failed ${response.status}: ${body}`);
   }
   return response.json();
 }

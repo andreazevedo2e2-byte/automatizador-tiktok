@@ -104,12 +104,92 @@ function renderTextLayer({ width, height, text, position = "bottom" }) {
   return canvas.toBuffer("image/png");
 }
 
-async function compositeSlide({ imageBuffer, text, outputPath, position }) {
+function normalizeLayer(layer = {}, fallback = {}) {
+  const text = String(layer.text ?? fallback.text ?? "").trim();
+  return {
+    id: String(layer.id || fallback.id || `layer-${Math.random().toString(36).slice(2, 8)}`),
+    text,
+    x: Number.isFinite(Number(layer.x)) ? Number(layer.x) : Number(fallback.x ?? 540),
+    y: Number.isFinite(Number(layer.y)) ? Number(layer.y) : Number(fallback.y ?? 1520),
+    width: Number.isFinite(Number(layer.width)) ? Number(layer.width) : Number(fallback.width ?? 900),
+    fontSize: Number.isFinite(Number(layer.fontSize)) ? Number(layer.fontSize) : Number(fallback.fontSize ?? 62),
+    fontFamily: String(layer.fontFamily || fallback.fontFamily || "sans-serif"),
+    color: String(layer.color || fallback.color || "#f8f3eb"),
+    strokeColor: String(layer.strokeColor || fallback.strokeColor || "rgba(5, 6, 8, 0.55)"),
+    strokeWidth: Number.isFinite(Number(layer.strokeWidth)) ? Number(layer.strokeWidth) : Number(fallback.strokeWidth ?? 14),
+    align: ["left", "center", "right"].includes(String(layer.align)) ? String(layer.align) : String(fallback.align || "center"),
+    hidden: Boolean(layer.hidden),
+  };
+}
+
+function createDefaultLayer({ text, position = "bottom" }) {
+  const defaultsByPosition = {
+    top: { x: 540, y: 400 },
+    center: { x: 540, y: 960 },
+    bottom: { x: 540, y: 1520 },
+  };
+  const base = defaultsByPosition[position] || defaultsByPosition.bottom;
+  return normalizeLayer(
+    {
+      id: "main",
+      text,
+      x: base.x,
+      y: base.y,
+      width: 900,
+      fontSize: 62,
+      fontFamily: "sans-serif",
+      color: "#f8f3eb",
+      strokeColor: "rgba(5, 6, 8, 0.55)",
+      strokeWidth: 14,
+      align: "center",
+      hidden: false,
+    },
+    {}
+  );
+}
+
+function renderEditableTextLayer({ width, height, layers = [] }) {
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext("2d");
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+
+  for (const rawLayer of layers) {
+    const layer = normalizeLayer(rawLayer);
+    if (layer.hidden || !layer.text) continue;
+    ctx.textAlign = layer.align;
+    const fit = fitTextBlock(ctx, layer.text, Math.max(200, layer.width + 140));
+    const fontSize = Math.max(20, Math.min(140, layer.fontSize || fit.fontSize));
+    ctx.font = `700 ${fontSize}px ${layer.fontFamily}`;
+    const lines = wrapText(ctx, layer.text, Math.max(180, layer.width));
+    const lineHeight = 1.1;
+    const totalHeight = lines.length * fontSize * lineHeight;
+
+    let textX = layer.x;
+    if (layer.align === "left") textX = layer.x - layer.width / 2;
+    if (layer.align === "right") textX = layer.x + layer.width / 2;
+
+    ctx.fillStyle = layer.color;
+    ctx.strokeStyle = layer.strokeColor;
+    ctx.lineWidth = Math.max(0, layer.strokeWidth);
+
+    lines.forEach((line, index) => {
+      const y = layer.y - totalHeight / 2 + index * fontSize * lineHeight;
+      if (ctx.lineWidth > 0) ctx.strokeText(line, textX, y);
+      ctx.fillText(line, textX, y);
+    });
+  }
+
+  return canvas.toBuffer("image/png");
+}
+
+async function compositeSlide({ imageBuffer, text, outputPath, position, textLayers = [] }) {
   const width = 1080;
   const height = 1920;
   const base = await sharp(imageBuffer).resize(width, height, { fit: "cover", position: "center" }).jpeg().toBuffer();
   const gradient = createGradientOverlay(width, height, position);
-  const textLayer = renderTextLayer({ width, height, text, position });
+  const effectiveLayers = Array.isArray(textLayers) && textLayers.length ? textLayers : [createDefaultLayer({ text, position })];
+  const textLayer = renderEditableTextLayer({ width, height, layers: effectiveLayers });
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await sharp(base)
@@ -126,6 +206,9 @@ async function compositeSlide({ imageBuffer, text, outputPath, position }) {
 module.exports = {
   compositeSlide,
   createGradientOverlay,
+  createDefaultLayer,
+  normalizeLayer,
+  renderEditableTextLayer,
   renderTextLayer,
   fitTextBlock,
   wrapText,

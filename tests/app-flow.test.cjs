@@ -132,6 +132,34 @@ describe("app flow", () => {
     const render = await request(app).post(`/api/runs/${runId}/render`).expect(200);
     expect(render.body.stage).toBe("preview");
     expect(render.body.slides[0].renderedImageUrl).toContain("/rendered/");
+    expect(render.body.slides[0].textLayers?.length).toBeGreaterThan(0);
+
+    const layerSave = await request(app)
+      .put(`/api/runs/${runId}/slides/1/layers`)
+      .send({
+        layers: [
+          {
+            id: "main",
+            text: "Edited layer text",
+            x: 520,
+            y: 1500,
+            width: 820,
+            fontSize: 58,
+            align: "center",
+          },
+        ],
+      })
+      .expect(200);
+    expect(layerSave.body.slides[0].textLayers[0].text).toBe("Edited layer text");
+
+    const reRender = await request(app).post(`/api/runs/${runId}/render`).expect(200);
+    expect(reRender.body.slides[0].textLayers[0].text).toBe("Edited layer text");
+
+    const replaceOne = await request(app)
+      .post(`/api/runs/${runId}/slides/1/replacement`)
+      .attach("image", await makeImage("#884422"), "single.jpg")
+      .expect(200);
+    expect(replaceOne.body.slides[0].replacementImageUrl).toContain("/uploads/");
 
     const zip = await request(app).get(`/api/runs/${runId}/export.zip`).expect(200);
     expect(zip.headers["content-type"]).toContain("application/zip");
@@ -168,5 +196,23 @@ describe("app flow", () => {
 
     await request(app).delete(`/api/runs/${runId}`).expect(200);
     await request(app).get(`/api/runs/${runId}`).expect(404);
+  });
+
+  it("returns a warning when Postiz is connected but has no active API subscription", async () => {
+    const warningApp = createApp({
+      rootDir,
+      publishStoreConfig: { disableSupabase: true },
+      services: {
+        postiz: {
+          listTikTokAccounts: async () => {
+            throw new Error("O Postiz autorizou a conta, mas a API respondeu que nao existe uma assinatura ativa para esse workspace.");
+          },
+        },
+      },
+    });
+
+    const response = await request(warningApp).get("/api/postiz/accounts").expect(200);
+    expect(response.body.accounts).toEqual([]);
+    expect(response.body.warning).toMatch(/assinatura ativa/i);
   });
 });

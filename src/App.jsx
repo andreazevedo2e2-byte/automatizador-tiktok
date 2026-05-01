@@ -2,17 +2,20 @@ import {
   ArrowRight,
   CalendarClock,
   Check,
+  ChevronLeft,
   Clipboard,
   Download,
   ImagePlus,
   Loader2,
-  Play,
+  Palette,
   ScanText,
   Send,
   Sparkles,
+  Type,
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { buildProjectRoute, getUnlockedProjectStages, parseProjectRoute } from "./project-route.mjs";
 import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.js";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
@@ -28,16 +31,15 @@ const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
   { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
-  { key: "generate", number: "04", title: "Gerar", hint: "Aplicar legendas" },
-  { key: "download", number: "05", title: "Baixar", hint: "Slides e ZIP" },
-  { key: "publish", number: "06", title: "Publicar", hint: "Postiz e contas" },
+  { key: "edit", number: "04", title: "Editar", hint: "Ajustar slide final" },
+  { key: "publish", number: "05", title: "Publicar", hint: "Postiz e contas" },
 ];
 
 const stageByRun = {
   review: "review",
   images: "images",
-  render: "generate",
-  preview: "download",
+  render: "edit",
+  preview: "edit",
   publish: "publish",
 };
 
@@ -69,6 +71,11 @@ function getActiveStage(run) {
   return stageByRun[run.stage] || "review";
 }
 
+function getUnlockedStages(run) {
+  if (!run) return ["extract"];
+  return getUnlockedProjectStages(getActiveStage(run));
+}
+
 function projectTitle(project) {
   const caption = project.captionPortuguese || project.captionEnglish || "";
   if (caption.trim()) return caption.trim().slice(0, 54);
@@ -78,6 +85,23 @@ function projectTitle(project) {
 
 function copyText(value) {
   return navigator.clipboard.writeText(value || "");
+}
+
+function defaultTextLayer(slide = {}) {
+  return {
+    id: "main",
+    text: slide.reviewedEnglish || slide.ocrEnglish || "",
+    x: 540,
+    y: 1520,
+    width: 900,
+    fontSize: 62,
+    fontFamily: "sans-serif",
+    color: "#f8f3eb",
+    strokeColor: "rgba(5, 6, 8, 0.55)",
+    strokeWidth: 14,
+    align: "center",
+    hidden: false,
+  };
 }
 
 async function readJsonResponse(response, fallbackMessage) {
@@ -93,25 +117,40 @@ function LoadingIcon({ active }) {
   return active ? <Loader2 className="spin" size={18} /> : null;
 }
 
-function StepRail({ activeStage }) {
+function StepRail({ activeStage, unlockedStages, hasProject, onSelectStage, onGoHome }) {
   const activeIndex = stageIndex[activeStage] || 0;
 
   return (
     <aside className="step-rail" aria-label="Etapas do fluxo">
-      <div className="brand-mark">
-        <span>TT</span>
+      <div className="rail-header">
+        <div className="brand-mark">
+          <span>TT</span>
+        </div>
+        {hasProject ? (
+          <button className="rail-home-button" type="button" onClick={onGoHome}>
+            <ChevronLeft size={16} />
+            Projetos
+          </button>
+        ) : null}
       </div>
       <div className="step-list">
         {steps.map((step, index) => {
           const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "locked";
+          const canOpen = step.key === "extract" ? !hasProject : unlockedStages.includes(step.key);
           return (
-            <div className={`rail-step ${state}`} key={step.key}>
+            <button
+              type="button"
+              className={`rail-step ${state} ${canOpen ? "clickable" : "disabled"}`}
+              key={step.key}
+              onClick={() => canOpen && onSelectStage(step.key)}
+              disabled={!canOpen || step.key === activeStage}
+            >
               <div className="rail-step__number">{state === "done" ? <Check size={15} /> : step.number}</div>
               <div>
                 <strong>{step.title}</strong>
                 <span>{step.hint}</span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -119,7 +158,7 @@ function StepRail({ activeStage }) {
   );
 }
 
-function StudioHeader({ activeStage, status }) {
+function StudioHeader({ activeStage, status, hasProject, onGoHome }) {
   const activeStep = steps[stageIndex[activeStage] || 0];
 
   return (
@@ -128,10 +167,18 @@ function StudioHeader({ activeStage, status }) {
         <p className="kicker">Slideshow Studio</p>
         <h1>Automatizador TikTok</h1>
       </div>
-      <div className="status-pill">
-        <span>{activeStep.number}</span>
-        <strong>{activeStep.title}</strong>
-        <small>{status}</small>
+      <div className="studio-header__actions">
+        {hasProject ? (
+          <button className="action-button ghost-action compact-action" type="button" onClick={onGoHome}>
+            <ChevronLeft size={18} />
+            Voltar aos projetos
+          </button>
+        ) : null}
+        <div className="status-pill">
+          <span>{activeStep.number}</span>
+          <strong>{activeStep.title}</strong>
+          <small>{status}</small>
+        </div>
       </div>
     </header>
   );
@@ -209,6 +256,98 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function EditableStoryPreview({ slide, layers, activeLayerId, onSelectLayer, onLayerMove, onPrev, onNext, slideIndex, total }) {
+  const dragRef = useRef(null);
+  const backgroundUrl = assetUrl(slide?.replacementImageUrl || slide?.renderedImageUrl || slide?.sourceImageUrl);
+  const previewWidth = 360;
+
+  function handlePointerDown(event, layer) {
+    event.preventDefault();
+    dragRef.current = {
+      id: layer.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: Number(layer.x || 540),
+      startY: Number(layer.y || 960),
+    };
+    onSelectLayer(layer.id);
+  }
+
+  function handlePointerMove(event) {
+    if (!dragRef.current) return;
+    const deltaX = ((event.clientX - dragRef.current.startClientX) / previewWidth) * 1080;
+    const deltaY = ((event.clientY - dragRef.current.startClientY) / (previewWidth * (16 / 9))) * 1920;
+    onLayerMove(dragRef.current.id, {
+      x: Math.max(80, Math.min(1000, dragRef.current.startX + deltaX)),
+      y: Math.max(120, Math.min(1800, dragRef.current.startY + deltaY)),
+    });
+  }
+
+  function stopDrag() {
+    dragRef.current = null;
+  }
+
+  return (
+    <div className="editable-preview-shell">
+      <div className="download-title">
+        <p className="stage-label">Etapa 04</p>
+        <h2>Edite o slide final</h2>
+        <p>Toque no texto para selecionar. Arraste dentro do preview para reposicionar.</p>
+      </div>
+      <div className="phone-preview editor-phone-preview">
+        <div className="phone-preview__top">
+          <span>{slide ? `Slide ${slide.index}` : "Editor"}</span>
+          <span>{total ? `${slideIndex + 1}/${total}` : "0/0"}</span>
+        </div>
+        <div className="phone-screen editor-screen" onPointerMove={handlePointerMove} onPointerUp={stopDrag} onPointerLeave={stopDrag}>
+          {total > 1 && (
+            <div className="story-progress" aria-hidden="true">
+              {Array.from({ length: total }).map((_, index) => (
+                <span className={index <= slideIndex ? "active" : ""} key={index} />
+              ))}
+            </div>
+          )}
+          {backgroundUrl ? <img src={backgroundUrl} alt={`Preview editavel do slide ${slide?.index || ""}`} /> : <div className="empty-screen"><p>Envie uma imagem para editar.</p></div>}
+          <div className="editor-overlay">
+            {layers.map((layer, index) => (
+              <button
+                type="button"
+                key={layer.id || index}
+                className={`editor-layer ${activeLayerId === layer.id ? "active" : ""}`}
+                style={{
+                  left: `${(Number(layer.x || 540) / 1080) * 100}%`,
+                  top: `${(Number(layer.y || 960) / 1920) * 100}%`,
+                  width: `${(Number(layer.width || 900) / 1080) * 100}%`,
+                  color: layer.color || "#f8f3eb",
+                  WebkitTextStroke: `${Math.max(0, Number(layer.strokeWidth || 0)) * 0.18}px ${layer.strokeColor || "rgba(5, 6, 8, 0.55)"}`,
+                  fontFamily: layer.fontFamily || "sans-serif",
+                  fontSize: `${Math.max(18, (Number(layer.fontSize || 62) / 1080) * previewWidth)}px`,
+                  textAlign: layer.align || "center",
+                  display: layer.hidden ? "none" : "block",
+                }}
+                onClick={() => onSelectLayer(layer.id)}
+                onPointerDown={(event) => handlePointerDown(event, layer)}
+              >
+                {layer.text || `Texto ${index + 1}`}
+              </button>
+            ))}
+          </div>
+          {total > 1 && (
+            <>
+              <button className="story-tap-zone story-tap-zone--left" type="button" onClick={onPrev} disabled={slideIndex === 0} aria-label="Slide anterior">
+                <span>Anterior</span>
+              </button>
+              <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={slideIndex >= total - 1} aria-label="Proximo slide">
+                <span>Proximo</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -490,62 +629,84 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
       <div className="stage-footer">
         <button className="action-button main-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
           {uploading ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
-          Enviar imagens
+          Salvar imagens e abrir editor
         </button>
       </div>
     </section>
   );
 }
 
-function GenerateStage({ run, onRender, rendering }) {
-  const hashtags = hashtagsToText(run.hashtags);
-
-  return (
-    <section className="stage-card generate-stage">
-      <div className="stage-copy">
-        <p className="stage-label">Etapa 04</p>
-        <h2>Gerar slideshow final</h2>
-        <p>Agora eu aplico o texto revisado nas imagens novas, mantendo formato vertical e texto legível para TikTok.</p>
-      </div>
-
-      <div className="generate-board">
-        <div>
-          <strong>{run.slides.length}</strong>
-          <span>slides prontos para renderizar</span>
-        </div>
-        {hasContent(hashtags) && (
-          <div>
-            <strong>{hashtags}</strong>
-            <span>hashtags salvas</span>
-          </div>
-        )}
-      </div>
-
-      <button className="action-button main-action huge-action" type="button" onClick={onRender} disabled={rendering}>
-        {rendering ? <Loader2 className="spin" size={20} /> : <Play size={20} />}
-        Gerar preview final
-      </button>
-    </section>
-  );
-}
-
-function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
+function EditStage({
+  run,
+  activeIndex,
+  setActiveIndex,
+  onContinue,
+  onApplyLayers,
+  applyingLayers,
+  onReplaceImage,
+  replacingImage,
+}) {
   const slide = run.slides[activeIndex];
   const caption = run.captionPortuguese || run.captionEnglish || "";
   const hashtags = hashtagsToText(run.hashtags);
+  const [selectedLayerId, setSelectedLayerId] = useState("");
+  const [layersDraft, setLayersDraft] = useState([]);
+  const replaceInputRef = useRef(null);
+
+  useEffect(() => {
+    const incoming = Array.isArray(slide?.textLayers) && slide.textLayers.length ? slide.textLayers : [defaultTextLayer(slide)];
+    setLayersDraft(incoming.map((layer) => ({ ...layer })));
+    setSelectedLayerId(incoming[0]?.id || "");
+  }, [slide?.index, slide?.textLayers, slide?.reviewedEnglish, slide?.ocrEnglish]);
+
+  const selectedLayer =
+    layersDraft.find((layer) => layer.id === selectedLayerId) ||
+    layersDraft[0] ||
+    defaultTextLayer(slide);
+
+  function updateSelectedLayer(field, value) {
+    setLayersDraft((current) =>
+      current.map((layer) => (layer.id === selectedLayer.id ? { ...layer, [field]: value } : layer))
+    );
+  }
+
+  function addLayer() {
+    const id = `layer-${Date.now()}`;
+    const next = {
+      ...defaultTextLayer(slide),
+      id,
+      text: "Novo texto",
+      y: 960,
+      fontSize: 54,
+    };
+    setLayersDraft((current) => [...current, next]);
+    setSelectedLayerId(id);
+  }
+
+  function removeSelectedLayer() {
+    if (!selectedLayer) return;
+    setLayersDraft((current) => {
+      if (current.length <= 1) return current;
+      const filtered = current.filter((layer) => layer.id !== selectedLayer.id);
+      setSelectedLayerId(filtered[0]?.id || "");
+      return filtered;
+    });
+  }
+
+  function moveLayer(layerId, patch) {
+    setLayersDraft((current) => current.map((layer) => (layer.id === layerId ? { ...layer, ...patch } : layer)));
+  }
 
   return (
-    <section className="stage-card download-stage">
-      <div className="download-workbench">
+    <section className="stage-card edit-stage">
+      <div className="edit-workbench">
         <div className="story-column">
-          <div className="download-title">
-            <p className="stage-label">Etapa 05</p>
-            <h2>Preview final</h2>
-            <p>Clique nas laterais para conferir todos os slides.</p>
-          </div>
-          <PhonePreview
-            rendered
+          <EditableStoryPreview
             slide={slide}
+            layers={layersDraft}
+            activeLayerId={selectedLayer.id}
+            onSelectLayer={setSelectedLayerId}
+            onLayerMove={moveLayer}
             slideIndex={activeIndex}
             total={run.slides.length}
             onPrev={() => setActiveIndex(Math.max(0, activeIndex - 1))}
@@ -554,7 +715,158 @@ function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
           <SlideRail rendered slides={run.slides} activeIndex={activeIndex} onSelect={setActiveIndex} />
         </div>
 
-        <div className="download-panel">
+        <div className="edit-panel">
+          <article className="paint-panel">
+            <header>
+              <strong>Painel de edicao</strong>
+              <span>Troque o fundo, edite o texto e valide tudo antes de publicar.</span>
+            </header>
+            <div className="paint-layer-list">
+              {layersDraft.map((layer, index) => (
+                <button
+                  type="button"
+                  key={layer.id || index}
+                  className={`paint-layer-chip ${selectedLayer.id === layer.id ? "active" : ""}`}
+                  onClick={() => setSelectedLayerId(layer.id)}
+                >
+                  <Type size={14} />
+                  {layer.text?.slice(0, 24) || `Texto ${index + 1}`}
+                </button>
+              ))}
+            </div>
+            <div className="paint-actions">
+              <button type="button" className="action-button ghost-action" onClick={addLayer}>
+                + Adicionar texto
+              </button>
+              <button type="button" className="action-button ghost-action" onClick={() => replaceInputRef.current?.click()} disabled={replacingImage}>
+                {replacingImage ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
+                Trocar imagem do fundo
+              </button>
+              <button
+                type="button"
+                className="action-button quiet-action"
+                onClick={removeSelectedLayer}
+                disabled={layersDraft.length <= 1}
+              >
+                Remover texto
+              </button>
+            </div>
+            <input
+              hidden
+              ref={replaceInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) onReplaceImage(slide.index, file);
+                event.target.value = "";
+              }}
+            />
+            <label className="input-group">
+              <span>Texto da camada selecionada</span>
+              <textarea
+                value={selectedLayer.text || ""}
+                onChange={(event) => updateSelectedLayer("text", event.target.value)}
+                placeholder="Digite o texto da camada..."
+              />
+            </label>
+            <div className="paint-grid">
+              <label className="input-group">
+                <span>Fonte</span>
+                <select value={selectedLayer.fontFamily || "sans-serif"} onChange={(event) => updateSelectedLayer("fontFamily", event.target.value)}>
+                  <option value="sans-serif">Sans</option>
+                  <option value="serif">Serif</option>
+                  <option value="monospace">Mono</option>
+                </select>
+              </label>
+              <label className="input-group">
+                <span>Alinhamento</span>
+                <select value={selectedLayer.align || "center"} onChange={(event) => updateSelectedLayer("align", event.target.value)}>
+                  <option value="left">Esquerda</option>
+                  <option value="center">Centro</option>
+                  <option value="right">Direita</option>
+                </select>
+              </label>
+              <label className="input-group">
+                <span>Tamanho ({Math.round(Number(selectedLayer.fontSize || 62))})</span>
+                <input
+                  type="range"
+                  min="28"
+                  max="120"
+                  value={Number(selectedLayer.fontSize || 62)}
+                  onChange={(event) => updateSelectedLayer("fontSize", Number(event.target.value))}
+                />
+              </label>
+              <label className="input-group">
+                <span>Contorno ({Math.round(Number(selectedLayer.strokeWidth || 14))})</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="24"
+                  value={Number(selectedLayer.strokeWidth || 14)}
+                  onChange={(event) => updateSelectedLayer("strokeWidth", Number(event.target.value))}
+                />
+              </label>
+              <label className="input-group">
+                <span>Largura ({Math.round(Number(selectedLayer.width || 900))})</span>
+                <input
+                  type="range"
+                  min="320"
+                  max="980"
+                  value={Number(selectedLayer.width || 900)}
+                  onChange={(event) => updateSelectedLayer("width", Number(event.target.value))}
+                />
+              </label>
+              <label className="input-group">
+                <span>Posição X ({Math.round(Number(selectedLayer.x || 540))})</span>
+                <input
+                  type="range"
+                  min="80"
+                  max="1000"
+                  value={Number(selectedLayer.x || 540)}
+                  onChange={(event) => updateSelectedLayer("x", Number(event.target.value))}
+                />
+              </label>
+              <label className="input-group">
+                <span>Posição Y ({Math.round(Number(selectedLayer.y || 1520))})</span>
+                <input
+                  type="range"
+                  min="120"
+                  max="1800"
+                  value={Number(selectedLayer.y || 1520)}
+                  onChange={(event) => updateSelectedLayer("y", Number(event.target.value))}
+                />
+              </label>
+              <label className="input-group">
+                <span>Cor do texto</span>
+                <input type="color" value={selectedLayer.color || "#f8f3eb"} onChange={(event) => updateSelectedLayer("color", event.target.value)} />
+              </label>
+              <label className="input-group">
+                <span>Cor do contorno</span>
+                <input
+                  type="color"
+                  value={String(selectedLayer.strokeColor || "#050608").startsWith("#") ? selectedLayer.strokeColor : "#050608"}
+                  onChange={(event) => updateSelectedLayer("strokeColor", event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="paint-actions">
+              <button
+                className="action-button main-action"
+                type="button"
+                onClick={() => onApplyLayers(slide.index, layersDraft)}
+                disabled={applyingLayers}
+              >
+                {applyingLayers ? <Loader2 className="spin" size={18} /> : <Palette size={18} />}
+                Atualizar preview
+              </button>
+              <button className="action-button main-action" type="button" onClick={onContinue}>
+                <Send size={18} />
+                Tudo certo, ir para publicar
+              </button>
+            </div>
+          </article>
+
           <div className="download-actions">
             <a className="action-button main-action" href={`${apiBase}/api/runs/${run.runId}/slides/${slide.index}/download`} target="_blank" rel="noreferrer">
               <Download size={18} />
@@ -564,10 +876,6 @@ function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
               <Download size={18} />
               Baixar ZIP completo
             </a>
-            <button className="action-button main-action" type="button" onClick={onContinue}>
-              <Send size={18} />
-              Publicar no Postiz
-            </button>
           </div>
 
           {hasContent(caption) && (
@@ -628,7 +936,7 @@ function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onCon
     <section className="stage-card publish-stage">
       <div className="publish-layout">
         <div className="stage-copy">
-          <p className="stage-label">Etapa 06</p>
+          <p className="stage-label">Etapa 05</p>
           <h2>Enviar para o Postiz</h2>
           <p>
             Selecione as contas TikTok, defina um horário opcional e envie como rascunho seguro. Depois você finaliza no
@@ -737,8 +1045,12 @@ export function App() {
   const [publishing, setPublishing] = useState(false);
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [applyingLayers, setApplyingLayers] = useState(false);
+  const [replacingImage, setReplacingImage] = useState(false);
+  const [selectedStage, setSelectedStage] = useState("extract");
 
-  const activeStage = getActiveStage(run);
+  const activeStage = run ? selectedStage : "extract";
+  const unlockedStages = useMemo(() => getUnlockedStages(run), [run]);
   const replacementPreviews = useMemo(
     () =>
       replacementFiles.map((file) => ({
@@ -757,7 +1069,27 @@ export function App() {
 
   useEffect(() => {
     loadProjects();
-    restoreLastProject();
+    const route = parseProjectRoute(window.location.pathname);
+    if (route.view === "project" && route.runId) {
+      openProject(route.runId, { silent: true, syncRoute: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    function handlePopState() {
+      const route = parseProjectRoute(window.location.pathname);
+      if (route.view === "project" && route.runId) {
+        openProject(route.runId, { silent: true, syncRoute: false });
+        return;
+      }
+
+      clearActiveProject();
+      setError("");
+      setStatus("Escolha um projeto salvo ou crie um novo.");
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   useEffect(() => {
@@ -803,8 +1135,9 @@ export function App() {
         const data = await readJsonResponse(response, "Não consegui conectar o Postiz.");
         if (!response.ok) throw new Error(data.error || "Não consegui conectar o Postiz.");
         setAccounts(data.accounts || []);
-        setStatus("Postiz conectado. Volte para a etapa Publicar.");
-        window.history.replaceState({}, "", "/");
+        setStatus(data.warning || "Postiz conectado. Volte para a etapa Publicar.");
+        const runId = localStorage.getItem(currentRunStorageKey);
+        window.history.replaceState({}, "", buildProjectRoute(runId));
       } catch (requestError) {
         setError(requestError.message);
         setStatus("Postiz não conectado.");
@@ -814,7 +1147,38 @@ export function App() {
     finishPostizOAuth();
   }, []);
 
-  function hydrateRun(nextRun) {
+  function syncProjectRoute(runId, { replace = false } = {}) {
+    const nextUrl = buildProjectRoute(runId);
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl === currentUrl) return;
+    const method = replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", nextUrl);
+  }
+
+  function clearActiveProject() {
+    setRun(null);
+    setDraftSlides([]);
+    setDraftCaptionEnglish("");
+    setDraftCaptionPortuguese("");
+    setDraftHashtags("");
+    setCurrentReviewIndex(0);
+    setPreviewIndex(0);
+    setReplacementFiles([]);
+    setSelectedStage("extract");
+  }
+
+  function goHome({ replace = false, statusMessage = "Escolha um projeto salvo ou crie um novo." } = {}) {
+    clearActiveProject();
+    const method = replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", "/");
+    setError("");
+    setStatus(statusMessage);
+  }
+
+  function hydrateRun(nextRun, options = {}) {
+    const nextUnlockedStages = getUnlockedStages(nextRun);
+    const nextStage = nextUnlockedStages.includes(options.stage) ? options.stage : getActiveStage(nextRun);
+
     setRun(nextRun);
     setDraftSlides(nextRun.slides.map((slide) => ({ ...slide })));
     setDraftCaptionEnglish(nextRun.captionEnglish || "");
@@ -823,6 +1187,11 @@ export function App() {
     setCurrentReviewIndex(0);
     setPreviewIndex(0);
     setReplacementFiles([]);
+    setSelectedStage(nextStage);
+
+    if (options.syncRoute !== false && nextRun.runId) {
+      syncProjectRoute(nextRun.runId, { replace: Boolean(options.replaceRoute) });
+    }
   }
 
   function applySavedDraft(savedDraft) {
@@ -851,7 +1220,7 @@ export function App() {
     }
   }
 
-  async function openProject(runId, { silent = false } = {}) {
+  async function openProject(runId, { silent = false, syncRoute = true } = {}) {
     if (!runId) return;
     setError("");
     if (!silent) setStatus("Abrindo projeto salvo...");
@@ -859,7 +1228,7 @@ export function App() {
       const response = await fetch(`${apiBase}/api/runs/${runId}`);
       const data = await readJsonResponse(response, "Não consegui abrir esse projeto.");
       if (!response.ok) throw new Error(data.error || "Projeto não encontrado.");
-      hydrateRun(data);
+      hydrateRun(data, { syncRoute });
       const savedDraft = JSON.parse(localStorage.getItem(draftStorageKey) || "null");
       if (savedDraft?.runId === runId) applySavedDraft(savedDraft);
       localStorage.setItem(currentRunStorageKey, runId);
@@ -868,11 +1237,6 @@ export function App() {
       if (!silent) setError(requestError.message);
       localStorage.removeItem(currentRunStorageKey);
     }
-  }
-
-  async function restoreLastProject() {
-    const runId = localStorage.getItem(currentRunStorageKey);
-    if (runId) await openProject(runId, { silent: true });
   }
 
   async function deleteProject(runId) {
@@ -884,13 +1248,12 @@ export function App() {
       const data = await readJsonResponse(response, "Não consegui excluir esse projeto.");
       if (!response.ok) throw new Error(data.error || "Não consegui excluir esse projeto.");
       if (run?.runId === runId) {
-        setRun(null);
-        setDraftSlides([]);
         localStorage.removeItem(currentRunStorageKey);
         localStorage.removeItem(draftStorageKey);
+        goHome({ replace: true, statusMessage: "Projeto excluído." });
       }
       setProjects((items) => items.filter((project) => project.runId !== runId));
-      setStatus("Projeto excluído.");
+      if (run?.runId !== runId) setStatus("Projeto excluído.");
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -994,7 +1357,7 @@ export function App() {
 
       const data = await readJsonResponse(response, "Não consegui enviar ao Postiz.");
       if (!response.ok) throw new Error(data.error || "Não consegui salvar a revisão.");
-      hydrateRun(data);
+      hydrateRun(data, { stage: "images", replaceRoute: true });
       setStatus("Revisão salva. Agora envie suas imagens.");
       loadProjects();
     } catch (requestError) {
@@ -1064,10 +1427,14 @@ export function App() {
         method: "POST",
         body: formData,
       });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "Nao consegui enviar as imagens.");
       if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
-      hydrateRun(data);
-      setStatus("Imagens salvas. Pode gerar o preview.");
+      setStatus("Imagens salvas. Abrindo editor...");
+      const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
+      const renderData = await readJsonResponse(renderResponse, "Nao consegui abrir o editor.");
+      if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui abrir o editor.");
+      hydrateRun(renderData, { stage: "edit", replaceRoute: true });
+      setStatus("Editor pronto. Agora ajuste fonte, contorno e posicao.");
       loadProjects();
     } catch (requestError) {
       setError(requestError.message);
@@ -1086,9 +1453,9 @@ export function App() {
 
     try {
       const response = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonResponse(response, "Nao consegui carregar as contas do Postiz.");
       if (!response.ok) throw new Error(data.error || "Não consegui gerar o preview.");
-      hydrateRun(data);
+      hydrateRun(data, { stage: "edit", replaceRoute: true });
       setStatus("Preview pronto para baixar.");
       loadProjects();
     } catch (requestError) {
@@ -1096,6 +1463,65 @@ export function App() {
       setStatus("Preview não gerado.");
     } finally {
       setRendering(false);
+    }
+  }
+
+  async function applySlideLayers(slideIndex, layers) {
+    if (!run) return;
+    setApplyingLayers(true);
+    setError("");
+    setStatus("Aplicando ajustes visuais do texto...");
+    try {
+      const saveResponse = await fetch(`${apiBase}/api/runs/${run.runId}/slides/${slideIndex}/layers`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ layers }),
+      });
+      const saveData = await readJsonResponse(saveResponse, "Não consegui salvar os ajustes do texto.");
+      if (!saveResponse.ok) throw new Error(saveData.error || "Não consegui salvar os ajustes do texto.");
+
+      const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
+      const renderData = await readJsonResponse(renderResponse, "Não consegui atualizar o preview com os ajustes.");
+      if (!renderResponse.ok) throw new Error(renderData.error || "Não consegui atualizar o preview com os ajustes.");
+
+      hydrateRun(renderData, { stage: "edit", replaceRoute: true });
+      setStatus("Preview atualizado com seus ajustes de texto.");
+      loadProjects();
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Ajustes visuais não aplicados.");
+    } finally {
+      setApplyingLayers(false);
+    }
+  }
+
+  async function replaceSlideImage(slideIndex, file) {
+    if (!run || !file) return;
+    setReplacingImage(true);
+    setError("");
+    setStatus("Trocando imagem do slide...");
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+      const replaceResponse = await fetch(`${apiBase}/api/runs/${run.runId}/slides/${slideIndex}/replacement`, {
+        method: "POST",
+        body: formData,
+      });
+      const replaceData = await readJsonResponse(replaceResponse, "Nao consegui trocar a imagem do slide.");
+      if (!replaceResponse.ok) throw new Error(replaceData.error || "Nao consegui trocar a imagem do slide.");
+
+      const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
+      const renderData = await readJsonResponse(renderResponse, "Nao consegui atualizar o slide com a nova imagem.");
+      if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui atualizar o slide com a nova imagem.");
+
+      hydrateRun(renderData, { stage: "edit", replaceRoute: true });
+      setStatus("Imagem trocada e preview atualizado.");
+      loadProjects();
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Troca de imagem nao concluida.");
+    } finally {
+      setReplacingImage(false);
     }
   }
 
@@ -1107,7 +1533,10 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui carregar as contas do Postiz.");
       setAccounts(data.accounts || []);
-      setStatus(data.accounts?.length ? `${data.accounts.length} conta(s) TikTok carregada(s).` : "Nenhuma conta TikTok encontrada no Postiz.");
+      setStatus(
+        data.warning ||
+          (data.accounts?.length ? `${data.accounts.length} conta(s) TikTok carregada(s).` : "Nenhuma conta TikTok encontrada no Postiz.")
+      );
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Postiz ainda não conectado.");
@@ -1144,7 +1573,7 @@ export function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui enviar ao Postiz.");
-      hydrateRun(data.run);
+      hydrateRun(data.run, { stage: "publish", replaceRoute: true });
       setStatus("Rascunho enviado. Confira no Postiz/TikTok antes de publicar.");
       loadProjects();
     } catch (requestError) {
@@ -1155,12 +1584,39 @@ export function App() {
     }
   }
 
+  function selectStage(stepKey) {
+    if (!run) {
+      goHome();
+      return;
+    }
+
+    if (stepKey === "extract") {
+      goHome();
+      return;
+    }
+
+    if (!unlockedStages.includes(stepKey)) return;
+    setSelectedStage(stepKey);
+    setError("");
+    setStatus(`Etapa ${steps[stageIndex[stepKey]]?.title || stepKey} aberta.`);
+
+    if (stepKey === "publish" && !accounts.length && !loadingAccounts) {
+      loadPostizAccounts();
+    }
+  }
+
   return (
     <main className="app-shell">
-      <StepRail activeStage={activeStage} />
+      <StepRail
+        activeStage={activeStage}
+        unlockedStages={unlockedStages}
+        hasProject={Boolean(run)}
+        onSelectStage={selectStage}
+        onGoHome={() => goHome()}
+      />
 
       <section className="studio">
-        <StudioHeader activeStage={activeStage} status={status} />
+        <StudioHeader activeStage={activeStage} status={status} hasProject={Boolean(run)} onGoHome={() => goHome()} />
 
         {error && (
           <div className="error-banner" role="alert">
@@ -1212,15 +1668,18 @@ export function App() {
           />
         )}
 
-        {activeStage === "generate" && run && <GenerateStage run={run} onRender={renderSlideshow} rendering={rendering} />}
-
-        {activeStage === "download" && run && (
-          <DownloadStage
+        {activeStage === "edit" && run && (
+          <EditStage
             run={run}
             activeIndex={previewIndex}
             setActiveIndex={setPreviewIndex}
+            onApplyLayers={applySlideLayers}
+            applyingLayers={applyingLayers}
+            onReplaceImage={replaceSlideImage}
+            replacingImage={replacingImage}
             onContinue={() => {
               setRun({ ...run, stage: "publish" });
+              setSelectedStage("publish");
               loadPostizAccounts();
             }}
           />
@@ -1238,7 +1697,7 @@ export function App() {
           />
         )}
 
-        {(extracting || savingReview || uploadingImages || rendering || publishing) && (
+        {(extracting || savingReview || uploadingImages || rendering || publishing || applyingLayers || replacingImage) && (
           <div className="work-overlay">
             <LoadingIcon active />
             <span>{status}</span>

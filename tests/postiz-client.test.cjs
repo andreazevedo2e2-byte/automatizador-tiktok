@@ -110,4 +110,16 @@ describe("postiz client", () => {
       }),
     });
   });
+
+  it("surfaces a friendly message when Postiz has no active subscription", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ msg: "No subscription found" }),
+      text: async () => JSON.stringify({ msg: "No subscription found" }),
+    }));
+    const client = createPostizClient({ baseUrl: "https://postiz.test", apiKey: "key", fetchImpl });
+
+    await expect(client.listTikTokAccounts()).rejects.toThrow(/assinatura ativa/i);
+  });
 });
