@@ -14,6 +14,7 @@ const {
   buildCaptionEnglish,
   buildTranslatedSlides,
   getSlidePosition,
+  inferTextPositionFromOcrWords,
   normalizeHashtags,
   normalizeTikTokUrl,
   splitHashtags,
@@ -45,6 +46,7 @@ function createOcrRunner(rootDir) {
           ocrEnglish: (result.data.text || "").trim(),
           reviewedEnglish: (result.data.text || "").trim(),
           confidence: Math.round(result.data.confidence || 0),
+          preferredPosition: inferTextPositionFromOcrWords(result.data.words || []),
           status: "ocr-complete",
           replacementImagePath: "",
           replacementImageUrl: "",
@@ -373,7 +375,7 @@ function createApp(config = {}) {
           imageBuffer,
           text: slide.reviewedEnglish || slide.ocrEnglish,
           outputPath,
-          position: getSlidePosition(index, run.slides.length),
+          position: slide.preferredPosition || getSlidePosition(index, run.slides.length),
         });
 
         nextSlides.push({

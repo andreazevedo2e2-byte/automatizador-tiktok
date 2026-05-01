@@ -33,6 +33,24 @@ function buildCaptionEnglish(input) {
   return String(input || "").trim();
 }
 
+function inferTextPositionFromOcrWords(words = []) {
+  const centers = words
+    .map((word) => {
+      const y0 = Number(word?.bbox?.y0);
+      const y1 = Number(word?.bbox?.y1);
+      if (Number.isNaN(y0) || Number.isNaN(y1)) return null;
+      return (y0 + y1) / 2;
+    })
+    .filter((value) => typeof value === "number");
+
+  if (!centers.length) return "bottom";
+
+  const averageY = centers.reduce((sum, value) => sum + value, 0) / centers.length;
+  if (averageY < 520) return "top";
+  if (averageY < 1240) return "center";
+  return "bottom";
+}
+
 function getSlidePosition(index, totalSlides) {
   if (index === 0) return "center";
   if (index === totalSlides - 1) return "top";
@@ -51,6 +69,7 @@ module.exports = {
   buildCaptionEnglish,
   buildTranslatedSlides,
   getSlidePosition,
+  inferTextPositionFromOcrWords,
   normalizeHashtags,
   normalizeTikTokUrl,
   splitHashtags,

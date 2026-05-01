@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Copy,
   Download,
-  Globe2,
   ImagePlus,
   Loader2,
   ScanText,
@@ -20,11 +19,11 @@ const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 
 const steps = [
-  { key: "extract", label: "Extrair post" },
-  { key: "review", label: "Revisar conteúdo" },
-  { key: "images", label: "Enviar imagens" },
-  { key: "render", label: "Gerar slideshow" },
-  { key: "preview", label: "Visualizar e exportar" },
+  { key: "extract", label: "Extrair" },
+  { key: "review", label: "Revisar" },
+  { key: "images", label: "Imagens" },
+  { key: "render", label: "Gerar" },
+  { key: "preview", label: "Baixar" },
 ];
 
 const stageToStepIndex = {
@@ -54,101 +53,95 @@ function normalizeStage(run) {
   return stageToStepIndex[run.stage] ?? 1;
 }
 
-function SlideReviewCard({ slide, languageMode, onChange }) {
-  const textValue = languageMode === "pt" ? slide.reviewedPortuguese : slide.reviewedEnglish;
-  const setText = (value) => {
-    if (languageMode === "pt") {
-      onChange({
-        ...slide,
-        reviewedPortuguese: value,
-      });
-      return;
-    }
+function stepMessage(run) {
+  if (!run) return "Cole o link e clique em extrair.";
+  if (run.stage === "review") return "Revise um slide por vez em português.";
+  if (run.stage === "images") return "Envie as novas imagens na mesma ordem.";
+  if (run.stage === "render") return "Agora gere o slideshow final.";
+  if (run.stage === "preview") return "Preview pronto. Baixe slide por slide ou em ZIP.";
+  return "Continue o fluxo.";
+}
 
-    onChange({
-      ...slide,
-      reviewedEnglish: value,
-    });
-  };
-
+function SlideDots({ total, current, onSelect }) {
   return (
-    <article className="slide-review-card">
-      <div className="slide-review-media">
-        <img src={`${apiBase}${slide.sourceImageUrl}`} alt={`Slide ${slide.index}`} />
-        <span>Slide {slide.index}</span>
-      </div>
-      <div className="slide-review-body">
-        <div className="slide-review-meta">
-          <strong>OCR {slide.confidence}%</strong>
-          <small>{languageMode === "pt" ? "Modo traduzido" : "Modo original (inglês)"}</small>
-        </div>
-        <textarea
-          value={textValue || ""}
-          onChange={(event) => setText(event.target.value)}
-          placeholder={languageMode === "pt" ? "Revise o texto em português" : "Revise o texto em inglês"}
+    <div className="slide-dots">
+      {Array.from({ length: total }).map((_, index) => (
+        <button
+          key={index}
+          type="button"
+          className={`dot ${index === current ? "active" : ""}`}
+          onClick={() => onSelect(index)}
+          aria-label={`Ir para slide ${index + 1}`}
         />
-        <div className="slide-review-foot">
-          <div>
-            <span className="mini-label">Inglês final</span>
-            <p>{slide.reviewedEnglish || "—"}</p>
-          </div>
-          <div>
-            <span className="mini-label">Português de apoio</span>
-            <p>{slide.reviewedPortuguese || "—"}</p>
-          </div>
-        </div>
-      </div>
-    </article>
+      ))}
+    </div>
   );
 }
 
-function PreviewCarousel({ run, currentIndex, onMove }) {
-  const currentSlide = run.slides[currentIndex];
-  if (!currentSlide) return null;
-
+function ReviewWorkspace({ run, slide, currentIndex, onPrev, onNext, onSelect, onSlideChange, draftCaptionPortuguese, setDraftCaptionPortuguese, draftHashtags, setDraftHashtags }) {
   return (
-    <section className="preview-shell">
-      <div className="preview-stage">
-        <button onClick={() => onMove(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
-          <ChevronLeft size={18} />
-        </button>
-        <div className="preview-frame">
-          <img src={`${apiBase}${currentSlide.renderedImageUrl}`} alt={`Preview slide ${currentSlide.index}`} />
-          <span className="preview-chip">
-            {currentSlide.index}/{run.slides.length}
-          </span>
+    <section className="panel">
+      <div className="panel-head compact">
+        <div>
+          <span className="mini-label">Etapa 2</span>
+          <h2>Revise o texto</h2>
         </div>
-        <button onClick={() => onMove(Math.min(run.slides.length - 1, currentIndex + 1))} disabled={currentIndex === run.slides.length - 1}>
-          <ChevronRight size={18} />
-        </button>
+        <span className="friendly-tip">Ajuste só o português. O sistema converte internamente para inglês.</span>
       </div>
 
-      <div className="preview-sidebar">
-        <div className="summary-card">
-          <span className="mini-label">Caption final</span>
-          <p>{run.captionEnglish || "Sem caption detectado."}</p>
-          <div className="inline-actions">
-            <button onClick={() => copyToClipboard(run.captionEnglish)}>Copiar caption</button>
+      <div className="review-shell">
+        <div className="phone-card">
+          <div className="phone-card__head">
+            <span>Slide {slide.index}</span>
+            <span>{currentIndex + 1}/{run.slides.length}</span>
+          </div>
+          <div className="phone-card__frame">
+            <img src={`${apiBase}${slide.sourceImageUrl}`} alt={`Slide ${slide.index}`} />
+          </div>
+          <div className="phone-card__nav">
+            <button type="button" onClick={onPrev} disabled={currentIndex === 0}>
+              <ChevronLeft size={18} />
+              Anterior
+            </button>
+            <SlideDots total={run.slides.length} current={currentIndex} onSelect={onSelect} />
+            <button type="button" onClick={onNext} disabled={currentIndex === run.slides.length - 1}>
+              Próximo
+              <ChevronRight size={18} />
+            </button>
           </div>
         </div>
 
-        <div className="summary-card">
-          <span className="mini-label">Hashtags</span>
-          <p>{hashtagsToText(run.hashtags) || "Sem hashtags detectadas."}</p>
-          <div className="inline-actions">
-            <button onClick={() => copyToClipboard(hashtagsToText(run.hashtags))}>Copiar hashtags</button>
+        <div className="editor-stack">
+          <div className="editor-card">
+            <label className="field">
+              <span>Texto do slide {slide.index}</span>
+              <textarea
+                value={slide.reviewedPortuguese || ""}
+                onChange={(event) =>
+                  onSlideChange({
+                    ...slide,
+                    reviewedPortuguese: event.target.value,
+                  })
+                }
+                placeholder="Edite o texto deste slide em português"
+              />
+            </label>
           </div>
-        </div>
 
-        <div className="summary-card">
-          <span className="mini-label">Downloads</span>
-          <div className="download-stack">
-            <a href={`${apiBase}/api/runs/${run.runId}/slides/${currentSlide.index}/download`} target="_blank" rel="noreferrer">
-              Baixar slide atual
-            </a>
-            <a href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
-              Baixar ZIP completo
-            </a>
+          <div className="editor-card compact-card">
+            <label className="field">
+              <span>Legenda do post</span>
+              <textarea
+                value={draftCaptionPortuguese}
+                onChange={(event) => setDraftCaptionPortuguese(event.target.value)}
+                placeholder="Legenda em português para você revisar"
+              />
+            </label>
+
+            <label className="field">
+              <span>Hashtags</span>
+              <textarea value={draftHashtags} onChange={(event) => setDraftHashtags(event.target.value)} placeholder="#fitness #motivation" />
+            </label>
           </div>
         </div>
       </div>
@@ -156,16 +149,97 @@ function PreviewCarousel({ run, currentIndex, onMove }) {
   );
 }
 
+function FinalPreview({ run, currentIndex, onMove }) {
+  const currentSlide = run.slides[currentIndex];
+  if (!currentSlide) return null;
+
+  return (
+    <section className="panel">
+      <div className="panel-head compact">
+        <div>
+          <span className="mini-label">Etapa 5</span>
+          <h2>Preview final</h2>
+        </div>
+        <div className="download-row">
+          <a href={`${apiBase}/api/runs/${run.runId}/slides/${currentSlide.index}/download`} target="_blank" rel="noreferrer">
+            <Download size={16} />
+            Baixar slide
+          </a>
+          <a href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
+            <Download size={16} />
+            Baixar ZIP completo
+          </a>
+        </div>
+      </div>
+
+      <div className="preview-layout">
+        <div className="phone-card preview-card">
+          <div className="phone-card__head">
+            <span>Slide {currentSlide.index}</span>
+            <span>{currentIndex + 1}/{run.slides.length}</span>
+          </div>
+          <div className="phone-card__frame">
+            <img src={`${apiBase}${currentSlide.renderedImageUrl}`} alt={`Preview do slide ${currentSlide.index}`} />
+          </div>
+          <div className="phone-card__nav">
+            <button type="button" onClick={() => onMove(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
+              <ChevronLeft size={18} />
+              Anterior
+            </button>
+            <SlideDots total={run.slides.length} current={currentIndex} onSelect={onMove} />
+            <button type="button" onClick={() => onMove(Math.min(run.slides.length - 1, currentIndex + 1))} disabled={currentIndex === run.slides.length - 1}>
+              Próximo
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="preview-notes">
+          <div className="summary-card">
+            <span className="mini-label">Texto aplicado neste slide</span>
+            <p>{currentSlide.reviewedPortuguese || "Sem texto revisado."}</p>
+          </div>
+          <div className="summary-card">
+            <span className="mini-label">Legenda final</span>
+            <p>{run.captionPortuguese || "Sem legenda detectada."}</p>
+            <button type="button" onClick={() => copyToClipboard(run.captionPortuguese || run.captionEnglish)}>
+              <Copy size={16} />
+              Copiar legenda
+            </button>
+          </div>
+          <div className="summary-card">
+            <span className="mini-label">Hashtags</span>
+            <p>{hashtagsToText(run.hashtags) || "Sem hashtags detectadas."}</p>
+            <button type="button" onClick={() => copyToClipboard(hashtagsToText(run.hashtags))}>
+              <Copy size={16} />
+              Copiar hashtags
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StepSummary({ title, text }) {
+  return (
+    <section className="panel summary-panel">
+      <span className="mini-label">{title}</span>
+      <p>{text}</p>
+    </section>
+  );
+}
+
 export function App() {
   const [url, setUrl] = useState(sampleUrl);
-  const [status, setStatus] = useState("Pronto para extrair um slideshow.");
+  const [status, setStatus] = useState("Pronto para começar.");
   const [error, setError] = useState("");
   const [run, setRun] = useState(null);
-  const [languageMode, setLanguageMode] = useState("pt");
   const [extracting, setExtracting] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [draftSlides, setDraftSlides] = useState([]);
   const [draftCaptionEnglish, setDraftCaptionEnglish] = useState("");
@@ -176,11 +250,7 @@ export function App() {
 
   const activeStep = normalizeStage(run);
   const canRender = run?.slides?.every((slide) => slide.replacementImageUrl);
-
-  const progressText = useMemo(() => {
-    if (!run) return "Cole um link, extraia, revise e gere o slideshow final.";
-    return `Run ${run.runId} · provedor ${run.provider} · etapa ${run.stage}`;
-  }, [run]);
+  const currentReviewSlide = draftSlides[currentReviewIndex];
 
   function hydrateRun(nextRun) {
     setRun(nextRun);
@@ -189,12 +259,13 @@ export function App() {
     setDraftCaptionPortuguese(nextRun.captionPortuguese || "");
     setDraftHashtags(hashtagsToText(nextRun.hashtags));
     setPreviewIndex(0);
+    setCurrentReviewIndex(0);
   }
 
   async function extractPost() {
     setError("");
     setExtracting(true);
-    setStatus("Extraindo slides, OCR e metadados do post...");
+    setStatus("Extraindo slides e organizando o texto...");
 
     try {
       const response = await fetch(`${apiBase}/api/extract`, {
@@ -205,10 +276,10 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Falha na extração.");
       hydrateRun(data);
-      setStatus(`Extração concluída com ${data.slides.length} slide(s).`);
+      setStatus(`Pronto. Encontramos ${data.slides.length} slides para revisar.`);
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Não foi possível extrair este post.");
+      setStatus("Não conseguimos extrair esse post.");
     } finally {
       setExtracting(false);
     }
@@ -223,39 +294,35 @@ export function App() {
 
     setSavingReview(true);
     setError("");
-    setStatus("Salvando revisão do conteúdo...");
+    setStatus("Salvando sua revisão...");
 
     try {
-      let slidesToSave = draftSlides;
-      let captionEnglishToSave = draftCaptionEnglish;
+      const reconcileResponse = await fetch(`${apiBase}/api/runs/${run.runId}/reconcile-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slides: draftSlides.map((slide) => ({
+            index: slide.index,
+            reviewedPortuguese: slide.reviewedPortuguese,
+          })),
+          captionPortuguese: draftCaptionPortuguese,
+        }),
+      });
 
-      if (languageMode === "pt") {
-        const reconcileResponse = await fetch(`${apiBase}/api/runs/${run.runId}/reconcile-review`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            slides: draftSlides.map((slide) => ({
-              index: slide.index,
-              reviewedPortuguese: slide.reviewedPortuguese,
-            })),
-            captionPortuguese: draftCaptionPortuguese,
-          }),
-        });
+      const reconciled = await reconcileResponse.json();
+      if (!reconcileResponse.ok) throw new Error(reconciled.error || "Falha ao converter sua revisão.");
 
-        const reconciled = await reconcileResponse.json();
-        if (!reconcileResponse.ok) throw new Error(reconciled.error || "Falha ao sincronizar tradução.");
+      const slidesToSave = draftSlides.map((slide) => {
+        const match = reconciled.slides.find((entry) => entry.index === slide.index);
+        return {
+          ...slide,
+          reviewedEnglish: match?.reviewedEnglish || slide.reviewedEnglish,
+        };
+      });
 
-        slidesToSave = draftSlides.map((slide) => {
-          const match = reconciled.slides.find((entry) => entry.index === slide.index);
-          return {
-            ...slide,
-            reviewedEnglish: match?.reviewedEnglish || slide.reviewedEnglish,
-          };
-        });
-        captionEnglishToSave = reconciled.captionEnglish || draftCaptionEnglish;
-        setDraftSlides(slidesToSave);
-        setDraftCaptionEnglish(captionEnglishToSave);
-      }
+      const captionEnglishToSave = reconciled.captionEnglish || draftCaptionEnglish;
+      setDraftSlides(slidesToSave);
+      setDraftCaptionEnglish(captionEnglishToSave);
 
       const response = await fetch(`${apiBase}/api/runs/${run.runId}/review`, {
         method: "PUT",
@@ -268,9 +335,9 @@ export function App() {
         }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha ao salvar a revisão.");
+      if (!response.ok) throw new Error(data.error || "Falha ao salvar sua revisão.");
       hydrateRun(data);
-      setStatus("Conteúdo revisado. Agora envie as novas imagens.");
+      setStatus("Texto salvo. Agora envie as novas imagens.");
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Não foi possível salvar a revisão.");
@@ -293,7 +360,7 @@ export function App() {
 
     setUploadingImages(true);
     setError("");
-    setStatus("Enviando imagens novas para o slideshow...");
+    setStatus("Enviando as novas imagens...");
 
     try {
       const formData = new FormData();
@@ -304,9 +371,9 @@ export function App() {
         body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha ao enviar imagens.");
+      if (!response.ok) throw new Error(data.error || "Falha ao enviar as imagens.");
       hydrateRun(data);
-      setStatus("Imagens novas prontas. Agora podemos renderizar.");
+      setStatus("Imagens recebidas. Agora já podemos gerar o preview.");
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Não foi possível enviar as imagens.");
@@ -319,19 +386,19 @@ export function App() {
     if (!run) return;
     setRendering(true);
     setError("");
-    setStatus("Gerando preview final do slideshow...");
+    setStatus("Gerando o slideshow final...");
 
     try {
       const response = await fetch(`${apiBase}/api/runs/${run.runId}/render`, {
         method: "POST",
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha ao renderizar.");
+      if (!response.ok) throw new Error(data.error || "Falha ao gerar o slideshow.");
       hydrateRun(data);
-      setStatus("Preview pronto. Você já pode revisar e baixar.");
+      setStatus("Tudo certo. Seu preview final está pronto.");
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("A renderização falhou.");
+      setStatus("A geração do preview falhou.");
     } finally {
       setRendering(false);
     }
@@ -339,22 +406,23 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero-panel">
-        <div>
+      <section className="hero-panel hero-panel--compact">
+        <div className="hero-copy-block">
           <p className="eyebrow">TikTok slideshow system</p>
           <h1>Automatizador TikTok</h1>
           <p className="hero-copy">
-            Extraia o post, revise em português sem perder o inglês final e gere um preview pronto para baixar slide por slide ou em ZIP.
+            Um fluxo simples: extrair, revisar em português, trocar as imagens e gerar o slideshow final.
           </p>
         </div>
-        <div className="hero-status">
-          <span className="status-label">Status atual</span>
-          <strong>{status}</strong>
-          <small>{progressText}</small>
+
+        <div className="hero-status hero-status--soft">
+          <span className="status-label">Agora estamos em</span>
+          <strong>{steps[activeStep]?.label || "Extrair"}</strong>
+          <small>{stepMessage(run)}</small>
         </div>
       </section>
 
-      <section className="stepper">
+      <section className="stepper stepper--compact">
         {steps.map((step, index) => {
           const state = index < activeStep ? "done" : index === activeStep ? "active" : "idle";
           return (
@@ -368,15 +436,14 @@ export function App() {
         })}
       </section>
 
-      <section className="workspace-grid">
+      <section className="workspace-grid simplified-grid">
         <div className="main-column">
           <section className="panel">
-            <div className="panel-head">
+            <div className="panel-head compact">
               <div>
                 <span className="mini-label">Etapa 1</span>
                 <h2>Extrair o post</h2>
               </div>
-              <span className="soft-badge">SnapTik primeiro · TikTok fallback</span>
             </div>
 
             <label className="field">
@@ -389,7 +456,7 @@ export function App() {
                 {extracting ? <Loader2 className="spin" size={18} /> : <ScanText size={18} />}
                 Extrair post
               </button>
-              <button onClick={() => fileInputRef.current?.click()}>
+              <button type="button" onClick={() => fileInputRef.current?.click()}>
                 <Upload size={18} />
                 OCR via imagens
               </button>
@@ -404,7 +471,7 @@ export function App() {
                   if (!selected.length) return;
                   setExtracting(true);
                   setError("");
-                  setStatus("Rodando OCR nas imagens enviadas...");
+                  setStatus("Lendo as imagens enviadas...");
                   try {
                     const formData = new FormData();
                     selected.forEach((file) => formData.append("slides", file));
@@ -412,10 +479,10 @@ export function App() {
                     const data = await response.json();
                     if (!response.ok) throw new Error(data.error || "Falha no OCR.");
                     hydrateRun(data);
-                    setStatus(`OCR concluído com ${data.slides.length} slide(s).`);
+                    setStatus(`Pronto. Encontramos ${data.slides.length} slides para revisar.`);
                   } catch (requestError) {
                     setError(requestError.message);
-                    setStatus("Falha ao rodar OCR.");
+                    setStatus("Não foi possível ler essas imagens.");
                   } finally {
                     setExtracting(false);
                   }
@@ -424,73 +491,49 @@ export function App() {
             </div>
           </section>
 
-          {run && (
-            <section className="panel">
-              <div className="panel-head">
-                <div>
-                  <span className="mini-label">Etapa 2</span>
-                  <h2>Revisar conteúdo</h2>
-                </div>
-                <div className="inline-actions">
-                  <button className={languageMode === "pt" ? "active-tab" : ""} onClick={() => setLanguageMode("pt")}>
-                    <Globe2 size={16} />
-                    Português
-                  </button>
-                  <button className={languageMode === "en" ? "active-tab" : ""} onClick={() => setLanguageMode("en")}>
-                    <Sparkles size={16} />
-                    Inglês
-                  </button>
-                </div>
-              </div>
+          {run && activeStep === 1 && currentReviewSlide && (
+            <ReviewWorkspace
+              run={run}
+              slide={currentReviewSlide}
+              currentIndex={currentReviewIndex}
+              onPrev={() => setCurrentReviewIndex((current) => Math.max(0, current - 1))}
+              onNext={() => setCurrentReviewIndex((current) => Math.min(run.slides.length - 1, current + 1))}
+              onSelect={setCurrentReviewIndex}
+              onSlideChange={updateDraftSlide}
+              draftCaptionPortuguese={draftCaptionPortuguese}
+              setDraftCaptionPortuguese={setDraftCaptionPortuguese}
+              draftHashtags={draftHashtags}
+              setDraftHashtags={setDraftHashtags}
+            />
+          )}
 
-              <div className="review-grid">
-                <label className="field">
-                  <span>{languageMode === "pt" ? "Caption de apoio" : "Caption final em inglês"}</span>
-                  <textarea
-                    value={languageMode === "pt" ? draftCaptionPortuguese : draftCaptionEnglish}
-                    onChange={(event) =>
-                      languageMode === "pt"
-                        ? setDraftCaptionPortuguese(event.target.value)
-                        : setDraftCaptionEnglish(event.target.value)
-                    }
-                  />
-                </label>
-
-                <label className="field">
-                  <span>Hashtags</span>
-                  <textarea value={draftHashtags} onChange={(event) => setDraftHashtags(event.target.value)} />
-                </label>
-              </div>
-
-              <div className="slides-stack">
-                {draftSlides.map((slide) => (
-                  <SlideReviewCard key={slide.index} slide={slide} languageMode={languageMode} onChange={updateDraftSlide} />
-                ))}
-              </div>
-
+          {run && activeStep === 1 && (
+            <section className="panel compact-panel">
               <div className="action-row">
                 <button className="primary" onClick={saveReviewAndContinue} disabled={savingReview}>
                   {savingReview ? <Loader2 className="spin" size={18} /> : <CheckCircle2 size={18} />}
-                  Salvar revisão
+                  Salvar e continuar
                 </button>
               </div>
             </section>
           )}
 
-          {run && (
+          {run && activeStep > 1 && <StepSummary title="Texto revisado" text="Sua revisão foi salva. Você pode seguir sem ficar lendo tudo de novo." />}
+
+          {run && activeStep >= 2 && (
             <section className="panel">
-              <div className="panel-head">
+              <div className="panel-head compact">
                 <div>
                   <span className="mini-label">Etapa 3</span>
-                  <h2>Enviar novas imagens</h2>
+                  <h2>Trocar as imagens</h2>
                 </div>
-                <span className="soft-badge">{run.slides.length} imagem(ns) necessária(s)</span>
+                <span className="friendly-tip">{run.slides.length} imagens necessárias</span>
               </div>
 
               <label className="upload-dropzone">
                 <ImagePlus size={22} />
                 <strong>Selecione as novas imagens na ordem correta</strong>
-                <span>O sistema valida a quantidade antes de renderizar.</span>
+                <span>Exemplo: a primeira imagem vai para o slide 1, a segunda vai para o slide 2 e assim por diante.</span>
                 <input type="file" accept="image/*" multiple onChange={(event) => selectReplacementFiles(event.target.files)} />
               </label>
 
@@ -514,20 +557,17 @@ export function App() {
             </section>
           )}
 
-          {run && (
+          {run && activeStep >= 3 && (
             <section className="panel">
-              <div className="panel-head">
+              <div className="panel-head compact">
                 <div>
                   <span className="mini-label">Etapa 4</span>
-                  <h2>Gerar slideshow</h2>
+                  <h2>Gerar o preview</h2>
                 </div>
-                <span className="soft-badge">{canRender ? "Pronto para renderizar" : "Aguardando imagens"}</span>
               </div>
 
               <div className="render-card">
-                <p>
-                  O compositor vai gerar slides 1080×1920 com overlay de texto, quebra automática de linha e preview pronto para revisão.
-                </p>
+                <p>Quando você clicar abaixo, eu vou aplicar o texto ajustado nas novas imagens e montar o slideshow final.</p>
                 <button className="primary" onClick={renderSlideshow} disabled={!canRender || rendering}>
                   {rendering ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
                   Gerar preview final
@@ -536,60 +576,19 @@ export function App() {
             </section>
           )}
 
-          {run?.stage === "preview" && (
-            <section className="panel">
-              <div className="panel-head">
-                <div>
-                  <span className="mini-label">Etapa 5</span>
-                  <h2>Visualizar e exportar</h2>
-                </div>
-                <span className="soft-badge">Preview + downloads</span>
-              </div>
-              <PreviewCarousel run={run} currentIndex={previewIndex} onMove={setPreviewIndex} />
-            </section>
-          )}
+          {run?.stage === "preview" && <FinalPreview run={run} currentIndex={previewIndex} onMove={setPreviewIndex} />}
         </div>
 
         <aside className="side-column">
           <section className="panel side-panel">
-            <span className="mini-label">Checklist desta run</span>
+            <span className="mini-label">Progresso</span>
             <ul className="status-list">
-              <li className={run ? "done" : ""}>Link extraído</li>
+              <li className={run ? "done" : ""}>Post extraído</li>
               <li className={run?.stage === "images" || run?.stage === "render" || run?.stage === "preview" ? "done" : ""}>Texto revisado</li>
               <li className={run?.stage === "render" || run?.stage === "preview" ? "done" : ""}>Novas imagens enviadas</li>
-              <li className={run?.stage === "preview" ? "done" : ""}>Preview final gerado</li>
+              <li className={run?.stage === "preview" ? "done" : ""}>Preview pronto</li>
             </ul>
           </section>
-
-          {run && (
-            <section className="panel side-panel">
-              <span className="mini-label">Dados detectados</span>
-              <div className="summary-stack">
-                <div>
-                  <strong>Provider</strong>
-                  <p>{run.provider}</p>
-                </div>
-                <div>
-                  <strong>Slides</strong>
-                  <p>{run.slides.length}</p>
-                </div>
-                <div>
-                  <strong>Hashtags</strong>
-                  <p>{hashtagsToText(run.hashtags) || "Nenhuma por enquanto"}</p>
-                </div>
-                <div className="inline-actions">
-                  <button onClick={() => copyToClipboard(draftCaptionEnglish)}>
-                    <Copy size={16} />
-                    Copiar caption EN
-                  </button>
-                  <button onClick={() => copyToClipboard(draftCaptionPortuguese)}>
-                    <Copy size={16} />
-                    Copiar tradução PT
-                  </button>
-                </div>
-              </div>
-            </section>
-          )}
 
           {error && (
             <section className="panel error-panel">
@@ -600,25 +599,8 @@ export function App() {
 
           <section className="panel side-panel help-panel">
             <span className="mini-label">Próxima fase</span>
-            <p>
-              O ZIP final já sai estruturado para um handoff futuro com o <strong>Postiz</strong>, sem prender esta v1 à publicação automática.
-            </p>
-            <a href="https://postiz.com" target="_blank" rel="noreferrer">
-              Conhecer o Postiz
-            </a>
+            <p>Quando esta etapa estiver redonda, o próximo passo é ligar a saída ao fluxo de postagem.</p>
           </section>
-
-          {run?.stage === "preview" && (
-            <section className="panel side-panel">
-              <span className="mini-label">Exportação rápida</span>
-              <div className="download-stack">
-                <a href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
-                  <Download size={16} />
-                  Baixar ZIP
-                </a>
-              </div>
-            </section>
-          )}
         </aside>
       </section>
     </main>

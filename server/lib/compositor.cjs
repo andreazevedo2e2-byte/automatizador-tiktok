@@ -28,6 +28,29 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
+function fitTextBlock(ctx, text, width) {
+  let fontSize = 72;
+  let lines = [];
+  const minFontSize = 44;
+  const maxWidth = width - 148;
+
+  while (fontSize >= minFontSize) {
+    ctx.font = `700 ${fontSize}px sans-serif`;
+    lines = wrapText(ctx, text, maxWidth);
+    const longestLine = Math.max(...lines.map((line) => ctx.measureText(line).width), 0);
+    if (lines.length <= 6 && longestLine <= maxWidth) {
+      return { lines, fontSize };
+    }
+    fontSize -= 4;
+  }
+
+  ctx.font = `700 ${minFontSize}px sans-serif`;
+  return {
+    lines: wrapText(ctx, text, maxWidth),
+    fontSize: minFontSize,
+  };
+}
+
 function createGradientOverlay(width, height, position) {
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext("2d");
@@ -56,14 +79,11 @@ function createGradientOverlay(width, height, position) {
 function renderTextLayer({ width, height, text, position = "bottom" }) {
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext("2d");
-  const fontSize = 72;
-  const lineHeight = 1.12;
-  const maxWidth = width - 148;
-  ctx.font = `700 ${fontSize}px sans-serif`;
+  const lineHeight = 1.1;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  const lines = wrapText(ctx, text, maxWidth);
+  const { lines, fontSize } = fitTextBlock(ctx, text, width);
   const totalHeight = lines.length * fontSize * lineHeight;
 
   let centerY = height * 0.8;
@@ -107,5 +127,6 @@ module.exports = {
   compositeSlide,
   createGradientOverlay,
   renderTextLayer,
+  fitTextBlock,
   wrapText,
 };
