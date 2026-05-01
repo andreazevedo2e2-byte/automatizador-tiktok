@@ -11,6 +11,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { mergeReplacementFiles } from "./replacement-files.js";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
@@ -325,10 +326,22 @@ function ReviewStage({
   );
 }
 
-function ImageStage({ run, selectedFiles, onSelectFiles, previews, onUpload, uploading }) {
+function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onClearFiles, previews, onUpload, uploading }) {
   const inputRef = useRef(null);
   const expected = run.slides.length;
   const ready = selectedFiles.length === expected;
+  const slots = Array.from({ length: expected }, (_, index) => previews[index] || null);
+  const missing = Math.max(0, expected - selectedFiles.length);
+
+  function handleFileInput(event) {
+    onSelectFiles(event.target.files);
+    event.target.value = "";
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    onSelectFiles(event.dataTransfer.files);
+  }
 
   return (
     <section className="stage-card image-stage">
@@ -336,31 +349,58 @@ function ImageStage({ run, selectedFiles, onSelectFiles, previews, onUpload, upl
         <p className="stage-label">Etapa 03</p>
         <h2>Envie suas novas imagens</h2>
         <p>
-          Selecione exatamente {expected} imagens. A ordem importa: a primeira imagem vira o slide 1, a segunda vira o
-          slide 2, e assim por diante.
+          Pode escolher tudo de uma vez ou ir adicionando aos poucos. Eu mantenho a ordem e aceito imagens comuns do seu
+          PC, mesmo que não sejam 9:16.
         </p>
       </div>
 
-      <button className="upload-zone" type="button" onClick={() => inputRef.current?.click()}>
+      <button
+        className={`upload-zone ${ready ? "ready" : ""}`}
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+      >
         <ImagePlus size={34} />
-        <strong>{selectedFiles.length ? `${selectedFiles.length}/${expected} imagens selecionadas` : "Escolher imagens"}</strong>
-        <span>{ready ? "Tudo certo para enviar." : `Faltam ${Math.max(0, expected - selectedFiles.length)} imagens.`}</span>
+        <strong>{selectedFiles.length ? `${selectedFiles.length}/${expected} imagens na fila` : "Escolher ou arrastar imagens"}</strong>
+        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. Selecione só as que faltam que eu adiciono sem apagar as anteriores.`}</span>
       </button>
-      <input hidden ref={inputRef} type="file" accept="image/*" multiple onChange={(event) => onSelectFiles(event.target.files)} />
+      <input hidden ref={inputRef} type="file" accept="image/*" multiple onChange={handleFileInput} />
 
-      {previews.length > 0 && (
-        <div className="image-order-grid">
-          {previews.map((preview, index) => (
-            <article className="image-order-card" key={`${preview.name}-${index}`}>
-              <img src={preview.url} alt={`Nova imagem ${index + 1}`} />
+      <div className="image-stage-actions">
+        <button className="action-button ghost-action" type="button" onClick={() => inputRef.current?.click()} disabled={ready}>
+          <ImagePlus size={18} />
+          Adicionar imagens
+        </button>
+        <button className="action-button quiet-action" type="button" onClick={onClearFiles} disabled={!selectedFiles.length || uploading}>
+          Limpar seleção
+        </button>
+      </div>
+
+      <div className="image-slot-grid" aria-label="Ordem das imagens finais">
+        {slots.map((preview, index) => (
+          <article className={`image-slot-card ${preview ? "filled" : ""}`} key={index}>
+            {preview ? (
+              <>
+                <img src={preview.url} alt={`Nova imagem ${index + 1}`} />
+                <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading} aria-label={`Remover imagem ${index + 1}`}>
+                  Remover
+                </button>
+              </>
+            ) : (
               <div>
-                <span>Imagem {index + 1}</span>
-                <strong>{preview.name}</strong>
+                <ImagePlus size={22} />
+                <strong>Imagem {index + 1}</strong>
+                <span>vazia</span>
               </div>
-            </article>
-          ))}
-        </div>
-      )}
+            )}
+            <footer>
+              <span>Slide {index + 1}</span>
+              <strong>{preview?.name || "aguardando imagem"}</strong>
+            </footer>
+          </article>
+        ))}
+      </div>
 
       <div className="stage-footer">
         <button className="action-button main-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
@@ -510,6 +550,7 @@ export function App() {
     setDraftHashtags(hashtagsToText(nextRun.hashtags));
     setCurrentReviewIndex(0);
     setPreviewIndex(0);
+    setReplacementFiles([]);
   }
 
   async function extractPost() {
@@ -619,7 +660,38 @@ export function App() {
   }
 
   function selectReplacementFiles(fileList) {
-    setReplacementFiles(Array.from(fileList || []));
+    const incoming = Array.from(fileList || []);
+    if (!incoming.length || !run) return;
+
+    setError("");
+    setReplacementFiles((current) => {
+      const result = mergeReplacementFiles(current, incoming, run.slides.length);
+      if (result.acceptedCount > 0) {
+        setStatus(`${result.files.length}/${run.slides.length} imagens selecionadas.`);
+      }
+      if (result.invalidCount > 0) {
+        setError(`${result.invalidCount} arquivo(s) ignorado(s), porque não eram imagem.`);
+      }
+      if (result.ignoredCount > 0) {
+        setStatus(`Fila completa. Ignorei ${result.ignoredCount} imagem(ns) extra.`);
+      }
+      if (result.acceptedCount === 0 && result.invalidCount === 0 && result.ignoredCount === 0) {
+        setStatus("Nenhuma imagem nova selecionada.");
+      }
+      return result.files;
+    });
+  }
+
+  function removeReplacementFile(indexToRemove) {
+    setReplacementFiles((current) => current.filter((_, index) => index !== indexToRemove));
+    setError("");
+    setStatus("Imagem removida da fila.");
+  }
+
+  function clearReplacementFiles() {
+    setReplacementFiles([]);
+    setError("");
+    setStatus("Seleção limpa. Escolha as imagens novamente.");
   }
 
   async function uploadReplacementImages() {
@@ -718,6 +790,8 @@ export function App() {
             run={run}
             selectedFiles={replacementFiles}
             onSelectFiles={selectReplacementFiles}
+            onRemoveFile={removeReplacementFile}
+            onClearFiles={clearReplacementFiles}
             previews={replacementPreviews}
             onUpload={uploadReplacementImages}
             uploading={uploadingImages}
