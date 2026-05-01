@@ -6,15 +6,14 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const multer = require("multer");
 const JSZip = require("jszip");
-const { createWorker } = require("tesseract.js");
 
 const { compositeSlide } = require("./lib/compositor.cjs");
+const { createOcrRunner } = require("./lib/ocr.cjs");
 const { createRunStore } = require("./lib/run-store.cjs");
 const {
   buildCaptionEnglish,
   buildTranslatedSlides,
   getSlidePosition,
-  inferTextPositionFromOcrWords,
   normalizeHashtags,
   normalizeTikTokUrl,
   splitHashtags,
@@ -27,39 +26,6 @@ const {
   launchPersistentContext,
 } = require("./lib/tiktok.cjs");
 const { translateTexts } = require("./lib/translate.cjs");
-
-function createOcrRunner(rootDir) {
-  return async function runOcr(slidePaths, runId) {
-    const worker = await createWorker("eng", 1, {
-      langPath: rootDir,
-      cachePath: path.join(rootDir, ".tesseract-cache"),
-      gzip: false,
-    });
-    const slides = [];
-    try {
-      for (const [index, slidePath] of slidePaths.entries()) {
-        const result = await worker.recognize(slidePath);
-        slides.push({
-          index: index + 1,
-          sourceImagePath: slidePath,
-          sourceImageUrl: `/runs/${runId}/slides/${path.basename(slidePath)}`,
-          ocrEnglish: (result.data.text || "").trim(),
-          reviewedEnglish: (result.data.text || "").trim(),
-          confidence: Math.round(result.data.confidence || 0),
-          preferredPosition: inferTextPositionFromOcrWords(result.data.words || []),
-          status: "ocr-complete",
-          replacementImagePath: "",
-          replacementImageUrl: "",
-          renderedImagePath: "",
-          renderedImageUrl: "",
-        });
-      }
-    } finally {
-      await worker.terminate();
-    }
-    return slides;
-  };
-}
 
 function buildRunResponse(run) {
   return {

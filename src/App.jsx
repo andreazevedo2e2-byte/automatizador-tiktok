@@ -1,16 +1,18 @@
 import {
-  CheckCircle2,
+  ArrowRight,
+  Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
+  Clipboard,
   Download,
   ImagePlus,
   Loader2,
+  Play,
   ScanText,
   Sparkles,
-  Upload,
+  UploadCloud,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
@@ -19,22 +21,26 @@ const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 
 const steps = [
-  { key: "extract", label: "Extrair" },
-  { key: "review", label: "Revisar" },
-  { key: "images", label: "Imagens" },
-  { key: "render", label: "Gerar" },
-  { key: "preview", label: "Baixar" },
+  { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
+  { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
+  { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
+  { key: "generate", number: "04", title: "Gerar", hint: "Aplicar legendas" },
+  { key: "download", number: "05", title: "Baixar", hint: "Slides e ZIP" },
 ];
 
-const stageToStepIndex = {
-  review: 1,
-  images: 2,
-  render: 3,
-  preview: 4,
+const stageByRun = {
+  review: "review",
+  images: "images",
+  render: "generate",
+  preview: "download",
 };
 
-function copyToClipboard(value) {
-  return navigator.clipboard.writeText(value || "");
+const stageIndex = Object.fromEntries(steps.map((step, index) => [step.key, index]));
+
+function assetUrl(pathname) {
+  if (!pathname) return "";
+  if (/^https?:\/\//i.test(pathname)) return pathname;
+  return `${apiBase}${pathname}`;
 }
 
 function hashtagsToText(hashtags = []) {
@@ -48,184 +54,375 @@ function textToHashtags(input) {
     .filter(Boolean);
 }
 
-function normalizeStage(run) {
-  if (!run) return 0;
-  return stageToStepIndex[run.stage] ?? 1;
+function getActiveStage(run) {
+  if (!run) return "extract";
+  return stageByRun[run.stage] || "review";
 }
 
-function stepMessage(run) {
-  if (!run) return "Cole o link e clique em extrair.";
-  if (run.stage === "review") return "Revise um slide por vez em português.";
-  if (run.stage === "images") return "Envie as novas imagens na mesma ordem.";
-  if (run.stage === "render") return "Agora gere o slideshow final.";
-  if (run.stage === "preview") return "Preview pronto. Baixe slide por slide ou em ZIP.";
-  return "Continue o fluxo.";
+function copyText(value) {
+  return navigator.clipboard.writeText(value || "");
 }
 
-function SlideDots({ total, current, onSelect }) {
+function LoadingIcon({ active }) {
+  return active ? <Loader2 className="spin" size={18} /> : null;
+}
+
+function StepRail({ activeStage }) {
+  const activeIndex = stageIndex[activeStage] || 0;
+
   return (
-    <div className="slide-dots">
-      {Array.from({ length: total }).map((_, index) => (
+    <aside className="step-rail" aria-label="Etapas do fluxo">
+      <div className="brand-mark">
+        <span>TT</span>
+      </div>
+      <div className="step-list">
+        {steps.map((step, index) => {
+          const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "locked";
+          return (
+            <div className={`rail-step ${state}`} key={step.key}>
+              <div className="rail-step__number">{state === "done" ? <Check size={15} /> : step.number}</div>
+              <div>
+                <strong>{step.title}</strong>
+                <span>{step.hint}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </aside>
+  );
+}
+
+function StudioHeader({ activeStage, status }) {
+  const activeStep = steps[stageIndex[activeStage] || 0];
+
+  return (
+    <header className="studio-header">
+      <div>
+        <p className="kicker">Slideshow Studio</p>
+        <h1>Automatizador TikTok</h1>
+      </div>
+      <div className="status-pill">
+        <span>{activeStep.number}</span>
+        <strong>{activeStep.title}</strong>
+        <small>{status}</small>
+      </div>
+    </header>
+  );
+}
+
+function SlideRail({ slides, activeIndex, onSelect, rendered = false }) {
+  if (!slides?.length) return null;
+
+  return (
+    <div className="slide-rail" aria-label="Escolha um slide">
+      {slides.map((slide, index) => (
         <button
-          key={index}
           type="button"
-          className={`dot ${index === current ? "active" : ""}`}
+          className={`slide-chip ${activeIndex === index ? "active" : ""}`}
+          key={slide.index}
           onClick={() => onSelect(index)}
-          aria-label={`Ir para slide ${index + 1}`}
-        />
+        >
+          <img src={assetUrl(rendered ? slide.renderedImageUrl : slide.sourceImageUrl)} alt={`Slide ${slide.index}`} />
+          <span>{String(slide.index).padStart(2, "0")}</span>
+        </button>
       ))}
     </div>
   );
 }
 
-function ReviewWorkspace({ run, slide, currentIndex, onPrev, onNext, onSelect, onSlideChange, draftCaptionPortuguese, setDraftCaptionPortuguese, draftHashtags, setDraftHashtags }) {
+function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNext }) {
+  const imageUrl = assetUrl(rendered ? slide?.renderedImageUrl : slide?.sourceImageUrl);
+
   return (
-    <section className="panel">
-      <div className="panel-head compact">
-        <div>
-          <span className="mini-label">Etapa 2</span>
-          <h2>Revise o texto</h2>
+    <div className="phone-preview">
+      <div className="phone-preview__top">
+        <span>{slide ? `Slide ${slide.index}` : "Preview"}</span>
+        <span>{total ? `${slideIndex + 1}/${total}` : "0/0"}</span>
+      </div>
+      <div className="phone-screen">
+        {imageUrl ? (
+          <img src={imageUrl} alt={slide ? `Preview do slide ${slide.index}` : "Preview vazio"} />
+        ) : (
+          <div className="empty-screen">
+            <Sparkles size={30} />
+            <p>O preview aparece aqui.</p>
+          </div>
+        )}
+      </div>
+      {total > 1 && (
+        <div className="phone-controls">
+          <button type="button" onClick={onPrev} disabled={slideIndex === 0} aria-label="Slide anterior">
+            <ChevronLeft size={18} />
+          </button>
+          <div className="progress-dots">
+            {Array.from({ length: total }).map((_, index) => (
+              <span className={index === slideIndex ? "active" : ""} key={index} />
+            ))}
+          </div>
+          <button type="button" onClick={onNext} disabled={slideIndex === total - 1} aria-label="Próximo slide">
+            <ChevronRight size={18} />
+          </button>
         </div>
-        <span className="friendly-tip">Ajuste só o português. O sistema converte internamente para inglês.</span>
+      )}
+    </div>
+  );
+}
+
+function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots }) {
+  const uploadRef = useRef(null);
+
+  return (
+    <section className="stage-card extract-stage">
+      <div className="stage-copy">
+        <p className="stage-label">Etapa 01</p>
+        <h2>Comece pelo link do slideshow</h2>
+        <p>
+          Cole o link do post. A ferramenta baixa os slides, lê o texto das imagens e já prepara tudo para você revisar
+          em português.
+        </p>
       </div>
 
-      <div className="review-shell">
-        <div className="phone-card">
-          <div className="phone-card__head">
-            <span>Slide {slide.index}</span>
-            <span>{currentIndex + 1}/{run.slides.length}</span>
+      <div className="extract-box">
+        <label className="input-group">
+          <span>Link do post</span>
+          <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.tiktok.com/@perfil/photo/..." />
+        </label>
+
+        <div className="primary-actions">
+          <button className="action-button main-action" type="button" onClick={onExtract} disabled={extracting}>
+            {extracting ? <Loader2 className="spin" size={20} /> : <ScanText size={20} />}
+            Extrair post
+          </button>
+          <button className="action-button ghost-action" type="button" onClick={() => uploadRef.current?.click()} disabled={extracting}>
+            <UploadCloud size={20} />
+            Usar prints dos slides
+          </button>
+          <input
+            hidden
+            ref={uploadRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(event) => onUploadScreenshots(event.target.files)}
+          />
+        </div>
+      </div>
+
+      <div className="soft-note">
+        <Sparkles size={18} />
+        <span>Se o link falhar, mande os prints dos slides. O fluxo continua igual.</span>
+      </div>
+    </section>
+  );
+}
+
+function ReviewStage({
+  run,
+  slides,
+  activeIndex,
+  setActiveIndex,
+  onSlideChange,
+  captionPortuguese,
+  setCaptionPortuguese,
+  hashtags,
+  setHashtags,
+  onSave,
+  saving,
+}) {
+  const slide = slides[activeIndex];
+
+  return (
+    <section className="stage-card review-stage">
+      <div className="stage-split">
+        <div className="preview-stack">
+          <div className="stage-copy compact">
+            <p className="stage-label">Etapa 02</p>
+            <h2>Revise como se fosse um roteiro</h2>
+            <p>Você só vê português aqui. Na próxima etapa, o sistema converte sua revisão para inglês por baixo.</p>
           </div>
-          <div className="phone-card__frame">
-            <img src={`${apiBase}${slide.sourceImageUrl}`} alt={`Slide ${slide.index}`} />
-          </div>
-          <div className="phone-card__nav">
-            <button type="button" onClick={onPrev} disabled={currentIndex === 0}>
-              <ChevronLeft size={18} />
-              Anterior
-            </button>
-            <SlideDots total={run.slides.length} current={currentIndex} onSelect={onSelect} />
-            <button type="button" onClick={onNext} disabled={currentIndex === run.slides.length - 1}>
-              Próximo
-              <ChevronRight size={18} />
-            </button>
-          </div>
+
+          <PhonePreview
+            slide={slide}
+            slideIndex={activeIndex}
+            total={slides.length}
+            onPrev={() => setActiveIndex(Math.max(0, activeIndex - 1))}
+            onNext={() => setActiveIndex(Math.min(slides.length - 1, activeIndex + 1))}
+          />
+          <SlideRail slides={slides} activeIndex={activeIndex} onSelect={setActiveIndex} />
         </div>
 
-        <div className="editor-stack">
-          <div className="editor-card">
-            <label className="field">
-              <span>Texto do slide {slide.index}</span>
-              <textarea
-                value={slide.reviewedPortuguese || ""}
-                onChange={(event) =>
-                  onSlideChange({
-                    ...slide,
-                    reviewedPortuguese: event.target.value,
-                  })
-                }
-                placeholder="Edite o texto deste slide em português"
-              />
-            </label>
-          </div>
+        <div className="editor-panel">
+          <label className="input-group tall">
+            <span>Texto do slide {slide?.index}</span>
+            <textarea
+              value={slide?.reviewedPortuguese || ""}
+              onChange={(event) => onSlideChange({ ...slide, reviewedPortuguese: event.target.value })}
+              placeholder="Corrija o texto deste slide em português..."
+            />
+          </label>
 
-          <div className="editor-card compact-card">
-            <label className="field">
+          <div className="mini-grid">
+            <label className="input-group">
               <span>Legenda do post</span>
               <textarea
-                value={draftCaptionPortuguese}
-                onChange={(event) => setDraftCaptionPortuguese(event.target.value)}
-                placeholder="Legenda em português para você revisar"
+                value={captionPortuguese}
+                onChange={(event) => setCaptionPortuguese(event.target.value)}
+                placeholder="Legenda para revisar"
               />
             </label>
-
-            <label className="field">
+            <label className="input-group">
               <span>Hashtags</span>
-              <textarea value={draftHashtags} onChange={(event) => setDraftHashtags(event.target.value)} placeholder="#fitness #motivation" />
+              <textarea value={hashtags} onChange={(event) => setHashtags(event.target.value)} placeholder="#fitness #gym #motivation" />
             </label>
           </div>
+
+          <div className="editor-footer">
+            <span>
+              {run.slides.length} slides carregados. Revise no seu ritmo e avance quando estiver ok.
+            </span>
+            <button className="action-button main-action" type="button" onClick={onSave} disabled={saving}>
+              {saving ? <Loader2 className="spin" size={18} /> : <ArrowRight size={18} />}
+              Salvar e continuar
+            </button>
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function FinalPreview({ run, currentIndex, onMove }) {
-  const currentSlide = run.slides[currentIndex];
-  if (!currentSlide) return null;
+function ImageStage({ run, selectedFiles, onSelectFiles, previews, onUpload, uploading }) {
+  const inputRef = useRef(null);
+  const expected = run.slides.length;
+  const ready = selectedFiles.length === expected;
 
   return (
-    <section className="panel">
-      <div className="panel-head compact">
-        <div>
-          <span className="mini-label">Etapa 5</span>
-          <h2>Preview final</h2>
+    <section className="stage-card image-stage">
+      <div className="stage-copy">
+        <p className="stage-label">Etapa 03</p>
+        <h2>Envie suas novas imagens</h2>
+        <p>
+          Selecione exatamente {expected} imagens. A ordem importa: a primeira imagem vira o slide 1, a segunda vira o
+          slide 2, e assim por diante.
+        </p>
+      </div>
+
+      <button className="upload-zone" type="button" onClick={() => inputRef.current?.click()}>
+        <ImagePlus size={34} />
+        <strong>{selectedFiles.length ? `${selectedFiles.length}/${expected} imagens selecionadas` : "Escolher imagens"}</strong>
+        <span>{ready ? "Tudo certo para enviar." : `Faltam ${Math.max(0, expected - selectedFiles.length)} imagens.`}</span>
+      </button>
+      <input hidden ref={inputRef} type="file" accept="image/*" multiple onChange={(event) => onSelectFiles(event.target.files)} />
+
+      {previews.length > 0 && (
+        <div className="image-order-grid">
+          {previews.map((preview, index) => (
+            <article className="image-order-card" key={`${preview.name}-${index}`}>
+              <img src={preview.url} alt={`Nova imagem ${index + 1}`} />
+              <div>
+                <span>Imagem {index + 1}</span>
+                <strong>{preview.name}</strong>
+              </div>
+            </article>
+          ))}
         </div>
-        <div className="download-row">
-          <a href={`${apiBase}/api/runs/${run.runId}/slides/${currentSlide.index}/download`} target="_blank" rel="noreferrer">
-            <Download size={16} />
-            Baixar slide
-          </a>
-          <a href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
-            <Download size={16} />
-            Baixar ZIP completo
-          </a>
+      )}
+
+      <div className="stage-footer">
+        <button className="action-button main-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
+          {uploading ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
+          Enviar imagens
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function GenerateStage({ run, onRender, rendering }) {
+  return (
+    <section className="stage-card generate-stage">
+      <div className="stage-copy">
+        <p className="stage-label">Etapa 04</p>
+        <h2>Gerar slideshow final</h2>
+        <p>Agora eu aplico o texto revisado nas imagens novas, mantendo formato vertical e texto legível para TikTok.</p>
+      </div>
+
+      <div className="generate-board">
+        <div>
+          <strong>{run.slides.length}</strong>
+          <span>slides prontos para renderizar</span>
+        </div>
+        <div>
+          <strong>{hashtagsToText(run.hashtags) || "Sem hashtags"}</strong>
+          <span>hashtags salvas</span>
         </div>
       </div>
 
-      <div className="preview-layout">
-        <div className="phone-card preview-card">
-          <div className="phone-card__head">
-            <span>Slide {currentSlide.index}</span>
-            <span>{currentIndex + 1}/{run.slides.length}</span>
+      <button className="action-button main-action huge-action" type="button" onClick={onRender} disabled={rendering}>
+        {rendering ? <Loader2 className="spin" size={20} /> : <Play size={20} />}
+        Gerar preview final
+      </button>
+    </section>
+  );
+}
+
+function DownloadStage({ run, activeIndex, setActiveIndex }) {
+  const slide = run.slides[activeIndex];
+  const caption = run.captionPortuguese || run.captionEnglish || "";
+  const hashtags = hashtagsToText(run.hashtags);
+
+  return (
+    <section className="stage-card download-stage">
+      <div className="stage-split">
+        <div className="preview-stack">
+          <div className="stage-copy compact">
+            <p className="stage-label">Etapa 05</p>
+            <h2>Preview final</h2>
+            <p>Confira o slideshow como ele vai sair. Baixe um slide específico ou tudo em ZIP.</p>
           </div>
-          <div className="phone-card__frame">
-            <img src={`${apiBase}${currentSlide.renderedImageUrl}`} alt={`Preview do slide ${currentSlide.index}`} />
-          </div>
-          <div className="phone-card__nav">
-            <button type="button" onClick={() => onMove(Math.max(0, currentIndex - 1))} disabled={currentIndex === 0}>
-              <ChevronLeft size={18} />
-              Anterior
-            </button>
-            <SlideDots total={run.slides.length} current={currentIndex} onSelect={onMove} />
-            <button type="button" onClick={() => onMove(Math.min(run.slides.length - 1, currentIndex + 1))} disabled={currentIndex === run.slides.length - 1}>
-              Próximo
-              <ChevronRight size={18} />
-            </button>
-          </div>
+          <PhonePreview
+            rendered
+            slide={slide}
+            slideIndex={activeIndex}
+            total={run.slides.length}
+            onPrev={() => setActiveIndex(Math.max(0, activeIndex - 1))}
+            onNext={() => setActiveIndex(Math.min(run.slides.length - 1, activeIndex + 1))}
+          />
+          <SlideRail rendered slides={run.slides} activeIndex={activeIndex} onSelect={setActiveIndex} />
         </div>
 
-        <div className="preview-notes">
-          <div className="summary-card">
-            <span className="mini-label">Texto aplicado neste slide</span>
-            <p>{currentSlide.reviewedPortuguese || "Sem texto revisado."}</p>
+        <div className="download-panel">
+          <div className="download-actions">
+            <a className="action-button main-action" href={`${apiBase}/api/runs/${run.runId}/slides/${slide.index}/download`} target="_blank" rel="noreferrer">
+              <Download size={18} />
+              Baixar slide atual
+            </a>
+            <a className="action-button ghost-action" href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
+              <Download size={18} />
+              Baixar ZIP completo
+            </a>
           </div>
-          <div className="summary-card">
-            <span className="mini-label">Legenda final</span>
-            <p>{run.captionPortuguese || "Sem legenda detectada."}</p>
-            <button type="button" onClick={() => copyToClipboard(run.captionPortuguese || run.captionEnglish)}>
-              <Copy size={16} />
+
+          <article className="script-card">
+            <span>Legenda</span>
+            <p>{caption || "Nenhuma legenda detectada."}</p>
+            <button type="button" onClick={() => copyText(caption)}>
+              <Clipboard size={16} />
               Copiar legenda
             </button>
-          </div>
-          <div className="summary-card">
-            <span className="mini-label">Hashtags</span>
-            <p>{hashtagsToText(run.hashtags) || "Sem hashtags detectadas."}</p>
-            <button type="button" onClick={() => copyToClipboard(hashtagsToText(run.hashtags))}>
-              <Copy size={16} />
+          </article>
+
+          <article className="script-card">
+            <span>Hashtags</span>
+            <p>{hashtags || "Nenhuma hashtag detectada."}</p>
+            <button type="button" onClick={() => copyText(hashtags)}>
+              <Clipboard size={16} />
               Copiar hashtags
             </button>
-          </div>
+          </article>
         </div>
       </div>
-    </section>
-  );
-}
-
-function StepSummary({ title, text }) {
-  return (
-    <section className="panel summary-panel">
-      <span className="mini-label">{title}</span>
-      <p>{text}</p>
     </section>
   );
 }
@@ -235,22 +432,34 @@ export function App() {
   const [status, setStatus] = useState("Pronto para começar.");
   const [error, setError] = useState("");
   const [run, setRun] = useState(null);
-  const [extracting, setExtracting] = useState(false);
-  const [savingReview, setSavingReview] = useState(false);
-  const [uploadingImages, setUploadingImages] = useState(false);
-  const [rendering, setRendering] = useState(false);
-  const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
-  const [previewIndex, setPreviewIndex] = useState(0);
   const [draftSlides, setDraftSlides] = useState([]);
   const [draftCaptionEnglish, setDraftCaptionEnglish] = useState("");
   const [draftCaptionPortuguese, setDraftCaptionPortuguese] = useState("");
   const [draftHashtags, setDraftHashtags] = useState("");
+  const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
+  const [previewIndex, setPreviewIndex] = useState(0);
   const [replacementFiles, setReplacementFiles] = useState([]);
-  const fileInputRef = useRef(null);
+  const [extracting, setExtracting] = useState(false);
+  const [savingReview, setSavingReview] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
+  const [rendering, setRendering] = useState(false);
 
-  const activeStep = normalizeStage(run);
-  const canRender = run?.slides?.every((slide) => slide.replacementImageUrl);
-  const currentReviewSlide = draftSlides[currentReviewIndex];
+  const activeStage = getActiveStage(run);
+  const replacementPreviews = useMemo(
+    () =>
+      replacementFiles.map((file) => ({
+        file,
+        name: file.name,
+        url: URL.createObjectURL(file),
+      })),
+    [replacementFiles]
+  );
+
+  useEffect(() => {
+    return () => {
+      replacementPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+    };
+  }, [replacementPreviews]);
 
   function hydrateRun(nextRun) {
     setRun(nextRun);
@@ -258,14 +467,14 @@ export function App() {
     setDraftCaptionEnglish(nextRun.captionEnglish || "");
     setDraftCaptionPortuguese(nextRun.captionPortuguese || "");
     setDraftHashtags(hashtagsToText(nextRun.hashtags));
-    setPreviewIndex(0);
     setCurrentReviewIndex(0);
+    setPreviewIndex(0);
   }
 
   async function extractPost() {
     setError("");
     setExtracting(true);
-    setStatus("Extraindo slides e organizando o texto...");
+    setStatus("Extraindo slides e lendo o texto...");
 
     try {
       const response = await fetch(`${apiBase}/api/extract`, {
@@ -274,12 +483,36 @@ export function App() {
         body: JSON.stringify({ url }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha na extração.");
+      if (!response.ok) throw new Error(data.error || "Não consegui extrair esse post.");
       hydrateRun(data);
-      setStatus(`Pronto. Encontramos ${data.slides.length} slides para revisar.`);
+      setStatus(`${data.slides.length} slides prontos para revisar.`);
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Não conseguimos extrair esse post.");
+      setStatus("Extração não concluída.");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  async function uploadScreenshots(fileList) {
+    const selected = Array.from(fileList || []);
+    if (!selected.length) return;
+
+    setError("");
+    setExtracting(true);
+    setStatus("Lendo os prints enviados...");
+
+    try {
+      const formData = new FormData();
+      selected.forEach((file) => formData.append("slides", file));
+      const response = await fetch(`${apiBase}/api/ocr-upload`, { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui ler esses prints.");
+      hydrateRun(data);
+      setStatus(`${data.slides.length} slides prontos para revisar.`);
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Leitura dos prints não concluída.");
     } finally {
       setExtracting(false);
     }
@@ -289,12 +522,12 @@ export function App() {
     setDraftSlides((current) => current.map((slide) => (slide.index === nextSlide.index ? nextSlide : slide)));
   }
 
-  async function saveReviewAndContinue() {
+  async function saveReview() {
     if (!run) return;
 
-    setSavingReview(true);
     setError("");
-    setStatus("Salvando sua revisão...");
+    setSavingReview(true);
+    setStatus("Salvando revisão e preparando inglês final...");
 
     try {
       const reconcileResponse = await fetch(`${apiBase}/api/runs/${run.runId}/reconcile-review`, {
@@ -310,7 +543,7 @@ export function App() {
       });
 
       const reconciled = await reconcileResponse.json();
-      if (!reconcileResponse.ok) throw new Error(reconciled.error || "Falha ao converter sua revisão.");
+      if (!reconcileResponse.ok) throw new Error(reconciled.error || "Não consegui converter sua revisão.");
 
       const slidesToSave = draftSlides.map((slide) => {
         const match = reconciled.slides.find((entry) => entry.index === slide.index);
@@ -319,10 +552,7 @@ export function App() {
           reviewedEnglish: match?.reviewedEnglish || slide.reviewedEnglish,
         };
       });
-
       const captionEnglishToSave = reconciled.captionEnglish || draftCaptionEnglish;
-      setDraftSlides(slidesToSave);
-      setDraftCaptionEnglish(captionEnglishToSave);
 
       const response = await fetch(`${apiBase}/api/runs/${run.runId}/review`, {
         method: "PUT",
@@ -334,49 +564,48 @@ export function App() {
           hashtags: textToHashtags(draftHashtags),
         }),
       });
+
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha ao salvar sua revisão.");
+      if (!response.ok) throw new Error(data.error || "Não consegui salvar a revisão.");
       hydrateRun(data);
-      setStatus("Texto salvo. Agora envie as novas imagens.");
+      setStatus("Revisão salva. Agora envie suas imagens.");
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Não foi possível salvar a revisão.");
+      setStatus("Revisão não salva.");
     } finally {
       setSavingReview(false);
     }
   }
 
   function selectReplacementFiles(fileList) {
-    const selected = Array.from(fileList || []);
-    setReplacementFiles(selected);
+    setReplacementFiles(Array.from(fileList || []));
   }
 
   async function uploadReplacementImages() {
     if (!run) return;
     if (replacementFiles.length !== run.slides.length) {
-      setError(`Envie exatamente ${run.slides.length} imagens para continuar.`);
+      setError(`Escolha exatamente ${run.slides.length} imagens.`);
       return;
     }
 
-    setUploadingImages(true);
     setError("");
-    setStatus("Enviando as novas imagens...");
+    setUploadingImages(true);
+    setStatus("Enviando imagens novas...");
 
     try {
       const formData = new FormData();
       replacementFiles.forEach((file) => formData.append("images", file));
-
       const response = await fetch(`${apiBase}/api/runs/${run.runId}/replacements`, {
         method: "POST",
         body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha ao enviar as imagens.");
+      if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
       hydrateRun(data);
-      setStatus("Imagens recebidas. Agora já podemos gerar o preview.");
+      setStatus("Imagens salvas. Pode gerar o preview.");
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Não foi possível enviar as imagens.");
+      setStatus("Upload não concluído.");
     } finally {
       setUploadingImages(false);
     }
@@ -384,21 +613,20 @@ export function App() {
 
   async function renderSlideshow() {
     if (!run) return;
-    setRendering(true);
+
     setError("");
-    setStatus("Gerando o slideshow final...");
+    setRendering(true);
+    setStatus("Gerando slideshow final...");
 
     try {
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/render`, {
-        method: "POST",
-      });
+      const response = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Falha ao gerar o slideshow.");
+      if (!response.ok) throw new Error(data.error || "Não consegui gerar o preview.");
       hydrateRun(data);
-      setStatus("Tudo certo. Seu preview final está pronto.");
+      setStatus("Preview pronto para baixar.");
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("A geração do preview falhou.");
+      setStatus("Preview não gerado.");
     } finally {
       setRendering(false);
     }
@@ -406,202 +634,65 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero-panel hero-panel--compact">
-        <div className="hero-copy-block">
-          <p className="eyebrow">TikTok slideshow system</p>
-          <h1>Automatizador TikTok</h1>
-          <p className="hero-copy">
-            Um fluxo simples: extrair, revisar em português, trocar as imagens e gerar o slideshow final.
-          </p>
-        </div>
+      <StepRail activeStage={activeStage} />
 
-        <div className="hero-status hero-status--soft">
-          <span className="status-label">Agora estamos em</span>
-          <strong>{steps[activeStep]?.label || "Extrair"}</strong>
-          <small>{stepMessage(run)}</small>
-        </div>
-      </section>
+      <section className="studio">
+        <StudioHeader activeStage={activeStage} status={status} />
 
-      <section className="stepper stepper--compact">
-        {steps.map((step, index) => {
-          const state = index < activeStep ? "done" : index === activeStep ? "active" : "idle";
-          return (
-            <div className={`step-item ${state}`} key={step.key}>
-              <div className="step-badge">{state === "done" ? <CheckCircle2 size={16} /> : index + 1}</div>
-              <div>
-                <span>{step.label}</span>
-              </div>
-            </div>
-          );
-        })}
-      </section>
+        {error && (
+          <div className="error-banner" role="alert">
+            <strong>Precisa de atenção</strong>
+            <span>{error}</span>
+          </div>
+        )}
 
-      <section className="workspace-grid simplified-grid">
-        <div className="main-column">
-          <section className="panel">
-            <div className="panel-head compact">
-              <div>
-                <span className="mini-label">Etapa 1</span>
-                <h2>Extrair o post</h2>
-              </div>
-            </div>
+        {activeStage === "extract" && (
+          <ExtractStage
+            url={url}
+            setUrl={setUrl}
+            extracting={extracting}
+            onExtract={extractPost}
+            onUploadScreenshots={uploadScreenshots}
+          />
+        )}
 
-            <label className="field">
-              <span>Link do slideshow</span>
-              <input value={url} onChange={(event) => setUrl(event.target.value)} />
-            </label>
+        {activeStage === "review" && run && (
+          <ReviewStage
+            run={run}
+            slides={draftSlides}
+            activeIndex={currentReviewIndex}
+            setActiveIndex={setCurrentReviewIndex}
+            onSlideChange={updateDraftSlide}
+            captionPortuguese={draftCaptionPortuguese}
+            setCaptionPortuguese={setDraftCaptionPortuguese}
+            hashtags={draftHashtags}
+            setHashtags={setDraftHashtags}
+            onSave={saveReview}
+            saving={savingReview}
+          />
+        )}
 
-            <div className="action-row">
-              <button className="primary" onClick={extractPost} disabled={extracting}>
-                {extracting ? <Loader2 className="spin" size={18} /> : <ScanText size={18} />}
-                Extrair post
-              </button>
-              <button type="button" onClick={() => fileInputRef.current?.click()}>
-                <Upload size={18} />
-                OCR via imagens
-              </button>
-              <input
-                hidden
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={async (event) => {
-                  const selected = Array.from(event.target.files || []);
-                  if (!selected.length) return;
-                  setExtracting(true);
-                  setError("");
-                  setStatus("Lendo as imagens enviadas...");
-                  try {
-                    const formData = new FormData();
-                    selected.forEach((file) => formData.append("slides", file));
-                    const response = await fetch(`${apiBase}/api/ocr-upload`, { method: "POST", body: formData });
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.error || "Falha no OCR.");
-                    hydrateRun(data);
-                    setStatus(`Pronto. Encontramos ${data.slides.length} slides para revisar.`);
-                  } catch (requestError) {
-                    setError(requestError.message);
-                    setStatus("Não foi possível ler essas imagens.");
-                  } finally {
-                    setExtracting(false);
-                  }
-                }}
-              />
-            </div>
-          </section>
+        {activeStage === "images" && run && (
+          <ImageStage
+            run={run}
+            selectedFiles={replacementFiles}
+            onSelectFiles={selectReplacementFiles}
+            previews={replacementPreviews}
+            onUpload={uploadReplacementImages}
+            uploading={uploadingImages}
+          />
+        )}
 
-          {run && activeStep === 1 && currentReviewSlide && (
-            <ReviewWorkspace
-              run={run}
-              slide={currentReviewSlide}
-              currentIndex={currentReviewIndex}
-              onPrev={() => setCurrentReviewIndex((current) => Math.max(0, current - 1))}
-              onNext={() => setCurrentReviewIndex((current) => Math.min(run.slides.length - 1, current + 1))}
-              onSelect={setCurrentReviewIndex}
-              onSlideChange={updateDraftSlide}
-              draftCaptionPortuguese={draftCaptionPortuguese}
-              setDraftCaptionPortuguese={setDraftCaptionPortuguese}
-              draftHashtags={draftHashtags}
-              setDraftHashtags={setDraftHashtags}
-            />
-          )}
+        {activeStage === "generate" && run && <GenerateStage run={run} onRender={renderSlideshow} rendering={rendering} />}
 
-          {run && activeStep === 1 && (
-            <section className="panel compact-panel">
-              <div className="action-row">
-                <button className="primary" onClick={saveReviewAndContinue} disabled={savingReview}>
-                  {savingReview ? <Loader2 className="spin" size={18} /> : <CheckCircle2 size={18} />}
-                  Salvar e continuar
-                </button>
-              </div>
-            </section>
-          )}
+        {activeStage === "download" && run && <DownloadStage run={run} activeIndex={previewIndex} setActiveIndex={setPreviewIndex} />}
 
-          {run && activeStep > 1 && <StepSummary title="Texto revisado" text="Sua revisão foi salva. Você pode seguir sem ficar lendo tudo de novo." />}
-
-          {run && activeStep >= 2 && (
-            <section className="panel">
-              <div className="panel-head compact">
-                <div>
-                  <span className="mini-label">Etapa 3</span>
-                  <h2>Trocar as imagens</h2>
-                </div>
-                <span className="friendly-tip">{run.slides.length} imagens necessárias</span>
-              </div>
-
-              <label className="upload-dropzone">
-                <ImagePlus size={22} />
-                <strong>Selecione as novas imagens na ordem correta</strong>
-                <span>Exemplo: a primeira imagem vai para o slide 1, a segunda vai para o slide 2 e assim por diante.</span>
-                <input type="file" accept="image/*" multiple onChange={(event) => selectReplacementFiles(event.target.files)} />
-              </label>
-
-              {replacementFiles.length > 0 && (
-                <div className="replacement-list">
-                  {replacementFiles.map((file, index) => (
-                    <div className="replacement-card" key={`${file.name}-${index}`}>
-                      <span>Imagem {index + 1}</span>
-                      <strong>{file.name}</strong>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="action-row">
-                <button className="primary" onClick={uploadReplacementImages} disabled={uploadingImages || !replacementFiles.length}>
-                  {uploadingImages ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
-                  Enviar imagens
-                </button>
-              </div>
-            </section>
-          )}
-
-          {run && activeStep >= 3 && (
-            <section className="panel">
-              <div className="panel-head compact">
-                <div>
-                  <span className="mini-label">Etapa 4</span>
-                  <h2>Gerar o preview</h2>
-                </div>
-              </div>
-
-              <div className="render-card">
-                <p>Quando você clicar abaixo, eu vou aplicar o texto ajustado nas novas imagens e montar o slideshow final.</p>
-                <button className="primary" onClick={renderSlideshow} disabled={!canRender || rendering}>
-                  {rendering ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
-                  Gerar preview final
-                </button>
-              </div>
-            </section>
-          )}
-
-          {run?.stage === "preview" && <FinalPreview run={run} currentIndex={previewIndex} onMove={setPreviewIndex} />}
-        </div>
-
-        <aside className="side-column">
-          <section className="panel side-panel">
-            <span className="mini-label">Progresso</span>
-            <ul className="status-list">
-              <li className={run ? "done" : ""}>Post extraído</li>
-              <li className={run?.stage === "images" || run?.stage === "render" || run?.stage === "preview" ? "done" : ""}>Texto revisado</li>
-              <li className={run?.stage === "render" || run?.stage === "preview" ? "done" : ""}>Novas imagens enviadas</li>
-              <li className={run?.stage === "preview" ? "done" : ""}>Preview pronto</li>
-            </ul>
-          </section>
-
-          {error && (
-            <section className="panel error-panel">
-              <strong>Algo precisa de atenção</strong>
-              <p>{error}</p>
-            </section>
-          )}
-
-          <section className="panel side-panel help-panel">
-            <span className="mini-label">Próxima fase</span>
-            <p>Quando esta etapa estiver redonda, o próximo passo é ligar a saída ao fluxo de postagem.</p>
-          </section>
-        </aside>
+        {(extracting || savingReview || uploadingImages || rendering) && (
+          <div className="work-overlay">
+            <LoadingIcon active />
+            <span>{status}</span>
+          </div>
+        )}
       </section>
     </main>
   );

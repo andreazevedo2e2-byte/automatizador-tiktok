@@ -5,7 +5,7 @@ export DISPLAY="${DISPLAY:-:99}"
 export VNC_PORT="${VNC_PORT:-5900}"
 export NOVNC_PORT="${NOVNC_PORT:-6080}"
 
-mkdir -p /tmp/.X11-unix /app/browser-profile /app/runs
+mkdir -p /tmp/.X11-unix /app/browser-profile /app/runs /app/ocr-models
 
 Xvfb "$DISPLAY" -screen 0 1440x960x24 -ac +extension RANDR &
 fluxbox >/tmp/fluxbox.log 2>&1 &

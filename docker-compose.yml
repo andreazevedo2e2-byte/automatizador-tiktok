@@ -14,3 +14,4 @@ services:
     volumes:
       - ./runs:/app/runs
       - ./browser-profile:/app/browser-profile
+      - ./ocr-models:/app/ocr-models

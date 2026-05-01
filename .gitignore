@@ -4,5 +4,7 @@ dist
 runs
 browser-profile
 .vercel
+ocr-models
+tmp-ocr-test
 
 .vercel
