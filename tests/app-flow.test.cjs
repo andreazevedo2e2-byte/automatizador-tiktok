@@ -71,7 +71,8 @@ describe("app flow", () => {
           },
         ],
         extractCaptionAndHashtags: async () => ({
-          caption: "This changed my routine #fitness #habits",
+          caption: "This changed my routine",
+          hashtags: ["#fitness", "#habits"],
         }),
         translateTexts: async ({ texts, from, to }) =>
           texts.map((text) => `[${from}->${to}] ${text}`),
@@ -86,7 +87,8 @@ describe("app flow", () => {
       .expect(200);
 
     expect(extract.body.stage).toBe("review");
-    expect(extract.body.captionEnglish).toContain("#fitness");
+    expect(extract.body.captionEnglish).toBe("This changed my routine");
+    expect(extract.body.hashtags).toEqual(["#fitness", "#habits"]);
     expect(extract.body.slides[0].ocrPortuguese).toContain("[en->pt]");
 
     const runId = extract.body.runId;

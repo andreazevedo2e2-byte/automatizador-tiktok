@@ -1,8 +1,6 @@
 import {
   ArrowRight,
   Check,
-  ChevronLeft,
-  ChevronRight,
   Clipboard,
   Download,
   ImagePlus,
@@ -41,6 +39,10 @@ function assetUrl(pathname) {
   if (!pathname) return "";
   if (/^https?:\/\//i.test(pathname)) return pathname;
   return `${apiBase}${pathname}`;
+}
+
+function hasContent(value) {
+  return String(value || "").trim().length > 0;
 }
 
 function hashtagsToText(hashtags = []) {
@@ -133,6 +135,8 @@ function SlideRail({ slides, activeIndex, onSelect, rendered = false }) {
 
 function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNext }) {
   const imageUrl = assetUrl(rendered ? slide?.renderedImageUrl : slide?.sourceImageUrl);
+  const canGoBack = total > 1 && slideIndex > 0;
+  const canGoNext = total > 1 && slideIndex < total - 1;
 
   return (
     <div className="phone-preview">
@@ -141,6 +145,13 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
         <span>{total ? `${slideIndex + 1}/${total}` : "0/0"}</span>
       </div>
       <div className="phone-screen">
+        {total > 1 && (
+          <div className="story-progress" aria-hidden="true">
+            {Array.from({ length: total }).map((_, index) => (
+              <span className={index <= slideIndex ? "active" : ""} key={index} />
+            ))}
+          </div>
+        )}
         {imageUrl ? (
           <img src={imageUrl} alt={slide ? `Preview do slide ${slide.index}` : "Preview vazio"} />
         ) : (
@@ -149,22 +160,32 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
             <p>O preview aparece aqui.</p>
           </div>
         )}
+        {total > 1 && (
+          <>
+            <button
+              className="story-tap-zone story-tap-zone--left"
+              type="button"
+              onClick={onPrev}
+              disabled={!canGoBack}
+              aria-label="Slide anterior"
+            >
+              <span>Anterior</span>
+            </button>
+            <button
+              className="story-tap-zone story-tap-zone--right"
+              type="button"
+              onClick={onNext}
+              disabled={!canGoNext}
+              aria-label="Próximo slide"
+            >
+              <span>Próximo</span>
+            </button>
+            <div className="story-hint" aria-hidden="true">
+              Clique nas laterais para passar
+            </div>
+          </>
+        )}
       </div>
-      {total > 1 && (
-        <div className="phone-controls">
-          <button type="button" onClick={onPrev} disabled={slideIndex === 0} aria-label="Slide anterior">
-            <ChevronLeft size={18} />
-          </button>
-          <div className="progress-dots">
-            {Array.from({ length: total }).map((_, index) => (
-              <span className={index === slideIndex ? "active" : ""} key={index} />
-            ))}
-          </div>
-          <button type="button" onClick={onNext} disabled={slideIndex === total - 1} aria-label="Próximo slide">
-            <ChevronRight size={18} />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -176,10 +197,10 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots 
     <section className="stage-card extract-stage">
       <div className="stage-copy">
         <p className="stage-label">Etapa 01</p>
-        <h2>Comece pelo link do slideshow</h2>
+        <h2>Cole o link do slideshow</h2>
         <p>
-          Cole o link do post. A ferramenta baixa os slides, lê o texto das imagens e já prepara tudo para você revisar
-          em português.
+          Eu baixo os slides, leio o texto das imagens e preparo a revisão em português. Se o link travar, envie os
+          prints e siga o mesmo fluxo.
         </p>
       </div>
 
@@ -211,7 +232,7 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots 
 
       <div className="soft-note">
         <Sparkles size={18} />
-        <span>Se o link falhar, mande os prints dos slides. O fluxo continua igual.</span>
+        <span>O fluxo é local: extrai, revisa, troca as imagens, gera preview e baixa ZIP.</span>
       </div>
     </section>
   );
@@ -231,17 +252,29 @@ function ReviewStage({
   saving,
 }) {
   const slide = slides[activeIndex];
+  const showPostMeta = hasContent(captionPortuguese) || hasContent(hashtags);
 
   return (
     <section className="stage-card review-stage">
-      <div className="stage-split">
-        <div className="preview-stack">
-          <div className="stage-copy compact">
-            <p className="stage-label">Etapa 02</p>
-            <h2>Revise como se fosse um roteiro</h2>
-            <p>Você só vê português aqui. Na próxima etapa, o sistema converte sua revisão para inglês por baixo.</p>
-          </div>
+      <div className="review-toolbar">
+        <div>
+          <p className="stage-label">Etapa 02</p>
+          <h2>Revise o texto do slide</h2>
+          <p>Você edita em português. Na geração, eu transformo essa revisão em inglês por baixo.</p>
+        </div>
+        <div className="review-toolbar__actions">
+          <span className="review-count">
+            Slide {activeIndex + 1} de {slides.length}
+          </span>
+          <button className="action-button main-action" type="button" onClick={onSave} disabled={saving}>
+            {saving ? <Loader2 className="spin" size={18} /> : <ArrowRight size={18} />}
+            Salvar e continuar
+          </button>
+        </div>
+      </div>
 
+      <div className="review-workbench">
+        <div className="story-column">
           <PhonePreview
             slide={slide}
             slideIndex={activeIndex}
@@ -252,9 +285,9 @@ function ReviewStage({
           <SlideRail slides={slides} activeIndex={activeIndex} onSelect={setActiveIndex} />
         </div>
 
-        <div className="editor-panel">
+        <div className="editor-panel review-editor-panel">
           <label className="input-group tall">
-            <span>Texto do slide {slide?.index}</span>
+            <span>Texto em português do slide {slide?.index}</span>
             <textarea
               value={slide?.reviewedPortuguese || ""}
               onChange={(event) => onSlideChange({ ...slide, reviewedPortuguese: event.target.value })}
@@ -262,29 +295,29 @@ function ReviewStage({
             />
           </label>
 
-          <div className="mini-grid">
-            <label className="input-group">
-              <span>Legenda do post</span>
-              <textarea
-                value={captionPortuguese}
-                onChange={(event) => setCaptionPortuguese(event.target.value)}
-                placeholder="Legenda para revisar"
-              />
-            </label>
-            <label className="input-group">
-              <span>Hashtags</span>
-              <textarea value={hashtags} onChange={(event) => setHashtags(event.target.value)} placeholder="#fitness #gym #motivation" />
-            </label>
-          </div>
+          {showPostMeta && (
+            <div className="post-meta-panel">
+              {hasContent(captionPortuguese) && (
+                <label className="input-group">
+                  <span>Descrição do TikTok</span>
+                  <textarea
+                    value={captionPortuguese}
+                    onChange={(event) => setCaptionPortuguese(event.target.value)}
+                    placeholder="Texto da descrição do post"
+                  />
+                </label>
+              )}
+              {hasContent(hashtags) && (
+                <label className="input-group">
+                  <span>Hashtags encontradas</span>
+                  <textarea value={hashtags} onChange={(event) => setHashtags(event.target.value)} placeholder="#fitness #gym #motivation" />
+                </label>
+              )}
+            </div>
+          )}
 
           <div className="editor-footer">
-            <span>
-              {run.slides.length} slides carregados. Revise no seu ritmo e avance quando estiver ok.
-            </span>
-            <button className="action-button main-action" type="button" onClick={onSave} disabled={saving}>
-              {saving ? <Loader2 className="spin" size={18} /> : <ArrowRight size={18} />}
-              Salvar e continuar
-            </button>
+            <span>{run.slides.length} slides carregados. Clique nas laterais da imagem para navegar sem rolar a página.</span>
           </div>
         </div>
       </div>
@@ -340,6 +373,8 @@ function ImageStage({ run, selectedFiles, onSelectFiles, previews, onUpload, upl
 }
 
 function GenerateStage({ run, onRender, rendering }) {
+  const hashtags = hashtagsToText(run.hashtags);
+
   return (
     <section className="stage-card generate-stage">
       <div className="stage-copy">
@@ -353,10 +388,12 @@ function GenerateStage({ run, onRender, rendering }) {
           <strong>{run.slides.length}</strong>
           <span>slides prontos para renderizar</span>
         </div>
-        <div>
-          <strong>{hashtagsToText(run.hashtags) || "Sem hashtags"}</strong>
-          <span>hashtags salvas</span>
-        </div>
+        {hasContent(hashtags) && (
+          <div>
+            <strong>{hashtags}</strong>
+            <span>hashtags salvas</span>
+          </div>
+        )}
       </div>
 
       <button className="action-button main-action huge-action" type="button" onClick={onRender} disabled={rendering}>
@@ -374,12 +411,12 @@ function DownloadStage({ run, activeIndex, setActiveIndex }) {
 
   return (
     <section className="stage-card download-stage">
-      <div className="stage-split">
-        <div className="preview-stack">
-          <div className="stage-copy compact">
+      <div className="download-workbench">
+        <div className="story-column">
+          <div className="download-title">
             <p className="stage-label">Etapa 05</p>
             <h2>Preview final</h2>
-            <p>Confira o slideshow como ele vai sair. Baixe um slide específico ou tudo em ZIP.</p>
+            <p>Clique nas laterais para conferir todos os slides.</p>
           </div>
           <PhonePreview
             rendered
@@ -404,23 +441,27 @@ function DownloadStage({ run, activeIndex, setActiveIndex }) {
             </a>
           </div>
 
-          <article className="script-card">
-            <span>Legenda</span>
-            <p>{caption || "Nenhuma legenda detectada."}</p>
-            <button type="button" onClick={() => copyText(caption)}>
-              <Clipboard size={16} />
-              Copiar legenda
-            </button>
-          </article>
+          {hasContent(caption) && (
+            <article className="script-card">
+              <span>Descrição</span>
+              <p>{caption}</p>
+              <button type="button" onClick={() => copyText(caption)}>
+                <Clipboard size={16} />
+                Copiar descrição
+              </button>
+            </article>
+          )}
 
-          <article className="script-card">
-            <span>Hashtags</span>
-            <p>{hashtags || "Nenhuma hashtag detectada."}</p>
-            <button type="button" onClick={() => copyText(hashtags)}>
-              <Clipboard size={16} />
-              Copiar hashtags
-            </button>
-          </article>
+          {hasContent(hashtags) && (
+            <article className="script-card">
+              <span>Hashtags</span>
+              <p>{hashtags}</p>
+              <button type="button" onClick={() => copyText(hashtags)}>
+                <Clipboard size={16} />
+                Copiar hashtags
+              </button>
+            </article>
+          )}
         </div>
       </div>
     </section>

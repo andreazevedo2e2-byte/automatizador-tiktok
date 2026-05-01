@@ -172,7 +172,7 @@ function createApp(config = {}) {
       });
       const localizedSlides = buildTranslatedSlides(slides, slideTranslations);
 
-      const { caption: rawCaption = "" } = await services.extractCaptionAndHashtags(sourceUrl);
+      const { caption: rawCaption = "", hashtags: extractedHashtags = [] } = await services.extractCaptionAndHashtags(sourceUrl);
       const captionEnglish = buildCaptionEnglish(rawCaption);
       const [captionPortuguese = ""] = captionEnglish
         ? await services.translateTexts({ texts: [captionEnglish], from: "en", to: "pt" })
@@ -185,7 +185,7 @@ function createApp(config = {}) {
         stage: "review",
         captionEnglish,
         captionPortuguese,
-        hashtags: splitHashtags(captionEnglish),
+        hashtags: normalizeHashtags([...splitHashtags(captionEnglish), ...extractedHashtags]),
         export: null,
         slides: localizedSlides,
       };
