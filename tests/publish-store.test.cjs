@@ -41,4 +41,25 @@ describe("publish store", () => {
     expect(fetchImpl.mock.calls[1][0]).toContain("/rest/v1/post_destinations");
     expect(fetchImpl.mock.calls[1][1].method).toBe("POST");
   });
+
+  it("falls back to local memory if Supabase tables are not ready", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      text: async () => "table not found",
+      json: async () => ({ message: "table not found" }),
+    }));
+    const store = createPublishStore({
+      supabaseUrl: "https://supabase.test",
+      serviceRoleKey: "secret",
+      fetchImpl,
+    });
+
+    await store.upsertRun({ runId: "run-1", sourceUrl: "local", stage: "preview" });
+    await store.saveDestinations("run-1", [{ accountId: "tt-1", accountName: "One" }]);
+
+    const history = await store.listHistory();
+    expect(history[0].runId).toBe("run-1");
+    expect(history[0].destinations[0].accountId).toBe("tt-1");
+  });
 });

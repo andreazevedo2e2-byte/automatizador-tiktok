@@ -186,7 +186,25 @@ function createPublishStore(config = {}) {
   const supabaseUrl = config.supabaseUrl || process.env.SUPABASE_URL || "";
   const serviceRoleKey = config.serviceRoleKey || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   if (supabaseUrl && serviceRoleKey) {
-    return createSupabaseRestStore({ supabaseUrl, serviceRoleKey, fetchImpl: config.fetchImpl || fetch });
+    const primary = createSupabaseRestStore({ supabaseUrl, serviceRoleKey, fetchImpl: config.fetchImpl || fetch });
+    const fallback = createMemoryStore();
+
+    async function withFallback(method, args) {
+      try {
+        return await primary[method](...args);
+      } catch (error) {
+        console.warn(`[publish-store] Supabase unavailable for ${method}; using local fallback.`, error.message);
+        return fallback[method](...args);
+      }
+    }
+
+    return {
+      upsertRun: (...args) => withFallback("upsertRun", args),
+      saveDestinations: (...args) => withFallback("saveDestinations", args),
+      updateDestination: (...args) => withFallback("updateDestination", args),
+      recordEvent: (...args) => withFallback("recordEvent", args),
+      listHistory: (...args) => withFallback("listHistory", args),
+    };
   }
   return createMemoryStore();
 }
