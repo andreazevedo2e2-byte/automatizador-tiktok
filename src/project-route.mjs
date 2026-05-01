@@ -1,4 +1,4 @@
-const projectStages = ["review", "images", "edit", "publish"];
+const projectStages = ["review", "images", "publish"];
 
 export function buildProjectRoute(runId) {
   return runId ? `/projeto/${encodeURIComponent(runId)}` : "/";

@@ -32,15 +32,14 @@ const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
   { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
-  { key: "edit", number: "04", title: "Editar", hint: "Ajustar slide final" },
-  { key: "publish", number: "05", title: "Publicar", hint: "Postiz e contas" },
+  { key: "publish", number: "04", title: "Publicar", hint: "Postiz e contas" },
 ];
 
 const stageByRun = {
   review: "review",
   images: "images",
-  render: "edit",
-  preview: "edit",
+  render: "publish",
+  preview: "publish",
   publish: "publish",
 };
 
@@ -639,7 +638,7 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
       <div className="stage-footer">
         <button className="action-button main-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
           {uploading ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
-          Salvar imagens e abrir editor
+          Salvar imagens e gerar preview
         </button>
       </div>
     </section>
@@ -1008,19 +1007,15 @@ export function App() {
   const [draftCaptionPortuguese, setDraftCaptionPortuguese] = useState("");
   const [draftHashtags, setDraftHashtags] = useState("");
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
-  const [previewIndex, setPreviewIndex] = useState(0);
   const [replacementFiles, setReplacementFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
-  const [rendering, setRendering] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
-  const [applyingLayers, setApplyingLayers] = useState(false);
-  const [replacingImage, setReplacingImage] = useState(false);
   const [selectedStage, setSelectedStage] = useState("extract");
 
   const activeStage = run ? selectedStage : "extract";
@@ -1077,12 +1072,10 @@ export function App() {
         draftCaptionEnglish,
         draftCaptionPortuguese,
         draftHashtags,
-        currentReviewIndex,
-        previewIndex,
-        updatedAt: new Date().toISOString(),
+        currentReviewIndex,        updatedAt: new Date().toISOString(),
       })
     );
-  }, [run?.runId, draftSlides, draftCaptionEnglish, draftCaptionPortuguese, draftHashtags, currentReviewIndex, previewIndex]);
+  }, [run?.runId, draftSlides, draftCaptionEnglish, draftCaptionPortuguese, draftHashtags, currentReviewIndex ]);
 
   useEffect(() => {
     if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
@@ -1136,7 +1129,6 @@ export function App() {
     setDraftCaptionPortuguese("");
     setDraftHashtags("");
     setCurrentReviewIndex(0);
-    setPreviewIndex(0);
     setReplacementFiles([]);
     setSelectedStage("extract");
   }
@@ -1159,7 +1151,6 @@ export function App() {
     setDraftCaptionPortuguese(nextRun.captionPortuguese || "");
     setDraftHashtags(hashtagsToText(nextRun.hashtags));
     setCurrentReviewIndex(0);
-    setPreviewIndex(0);
     setReplacementFiles([]);
     setSelectedStage(nextStage);
 
@@ -1177,7 +1168,6 @@ export function App() {
     setDraftCaptionPortuguese(savedDraft.draftCaptionPortuguese || "");
     setDraftHashtags(savedDraft.draftHashtags || "");
     setCurrentReviewIndex(Number(savedDraft.currentReviewIndex || 0));
-    setPreviewIndex(Number(savedDraft.previewIndex || 0));
   }
 
   async function loadProjects() {
@@ -1403,12 +1393,12 @@ export function App() {
       });
       const data = await readJsonResponse(response, "Nao consegui enviar as imagens.");
       if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
-      setStatus("Imagens salvas. Abrindo editor...");
+      setStatus("Imagens salvas. Gerando slideshow final...");
       const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const renderData = await readJsonResponse(renderResponse, "Nao consegui abrir o editor.");
-      if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui abrir o editor.");
-      hydrateRun(renderData, { stage: "edit", replaceRoute: true });
-      setStatus("Editor pronto. Agora ajuste fonte, contorno e posicao.");
+      const renderData = await readJsonResponse(renderResponse, "Nao consegui gerar o preview final.");
+      if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui gerar o preview final.");
+      hydrateRun(renderData, { stage: "publish", replaceRoute: true });
+      setStatus("Preview pronto. Agora siga para publicar.");
       loadProjects();
     } catch (requestError) {
       setError(requestError.message);
@@ -1417,88 +1407,6 @@ export function App() {
       setUploadingImages(false);
     }
   }
-
-  async function renderSlideshow() {
-    if (!run) return;
-
-    setError("");
-    setRendering(true);
-    setStatus("Gerando slideshow final...");
-
-    try {
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const data = await readJsonResponse(response, "Nao consegui carregar as contas do Postiz.");
-      if (!response.ok) throw new Error(data.error || "Não consegui gerar o preview.");
-      hydrateRun(data, { stage: "edit", replaceRoute: true });
-      setStatus("Preview pronto para baixar.");
-      loadProjects();
-    } catch (requestError) {
-      setError(requestError.message);
-      setStatus("Preview não gerado.");
-    } finally {
-      setRendering(false);
-    }
-  }
-
-  async function applySlideLayers(slideIndex, layers) {
-    if (!run) return;
-    setApplyingLayers(true);
-    setError("");
-    setStatus("Aplicando ajustes visuais do texto...");
-    try {
-      const saveResponse = await fetch(`${apiBase}/api/runs/${run.runId}/slides/${slideIndex}/layers`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ layers }),
-      });
-      const saveData = await readJsonResponse(saveResponse, "Não consegui salvar os ajustes do texto.");
-      if (!saveResponse.ok) throw new Error(saveData.error || "Não consegui salvar os ajustes do texto.");
-
-      const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const renderData = await readJsonResponse(renderResponse, "Não consegui atualizar o preview com os ajustes.");
-      if (!renderResponse.ok) throw new Error(renderData.error || "Não consegui atualizar o preview com os ajustes.");
-
-      hydrateRun(renderData, { stage: "edit", replaceRoute: true });
-      setStatus("Preview atualizado com seus ajustes de texto.");
-      loadProjects();
-    } catch (requestError) {
-      setError(requestError.message);
-      setStatus("Ajustes visuais não aplicados.");
-    } finally {
-      setApplyingLayers(false);
-    }
-  }
-
-  async function replaceSlideImage(slideIndex, file) {
-    if (!run || !file) return;
-    setReplacingImage(true);
-    setError("");
-    setStatus("Trocando imagem do slide...");
-    try {
-      const formData = new FormData();
-      formData.append("image", file);
-      const replaceResponse = await fetch(`${apiBase}/api/runs/${run.runId}/slides/${slideIndex}/replacement`, {
-        method: "POST",
-        body: formData,
-      });
-      const replaceData = await readJsonResponse(replaceResponse, "Nao consegui trocar a imagem do slide.");
-      if (!replaceResponse.ok) throw new Error(replaceData.error || "Nao consegui trocar a imagem do slide.");
-
-      const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const renderData = await readJsonResponse(renderResponse, "Nao consegui atualizar o slide com a nova imagem.");
-      if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui atualizar o slide com a nova imagem.");
-
-      hydrateRun(renderData, { stage: "edit", replaceRoute: true });
-      setStatus("Imagem trocada e preview atualizado.");
-      loadProjects();
-    } catch (requestError) {
-      setError(requestError.message);
-      setStatus("Troca de imagem nao concluida.");
-    } finally {
-      setReplacingImage(false);
-    }
-  }
-
   async function loadPostizAccounts() {
     setLoadingAccounts(true);
     setError("");
@@ -1640,26 +1548,7 @@ export function App() {
             onUpload={uploadReplacementImages}
             uploading={uploadingImages}
           />
-        )}
-
-        {activeStage === "edit" && run && (
-          <EditStage
-            run={run}
-            activeIndex={previewIndex}
-            setActiveIndex={setPreviewIndex}
-            onApplyLayers={applySlideLayers}
-            applyingLayers={applyingLayers}
-            onReplaceImage={replaceSlideImage}
-            replacingImage={replacingImage}
-            onContinue={() => {
-              setRun({ ...run, stage: "publish" });
-              setSelectedStage("publish");
-              loadPostizAccounts();
-            }}
-          />
-        )}
-
-        {activeStage === "publish" && run && (
+        )}`r`n        {activeStage === "publish" && run && (
           <PublishStage
             run={run}
             accounts={accounts}
@@ -1671,7 +1560,7 @@ export function App() {
           />
         )}
 
-        {(extracting || savingReview || uploadingImages || rendering || publishing || applyingLayers || replacingImage) && (
+        {(extracting || savingReview || uploadingImages || publishing) && (
           <div className="work-overlay">
             <LoadingIcon active />
             <span>{status}</span>
@@ -1681,3 +1570,9 @@ export function App() {
     </main>
   );
 }
+
+
+
+
+
+

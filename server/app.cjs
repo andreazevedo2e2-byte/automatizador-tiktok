@@ -21,7 +21,6 @@ const { createRunStore } = require("./lib/run-store.cjs");
 const {
   buildCaptionEnglish,
   buildTranslatedSlides,
-  getSlidePosition,
   normalizeHashtags,
   normalizeTikTokUrl,
   splitHashtags,
@@ -52,12 +51,22 @@ function buildRunResponse(run) {
 
 function buildSlideLayers(slide, index, total) {
   const fallbackText = slide.reviewedEnglish || slide.ocrEnglish || "";
-  const fallbackPosition = slide.preferredPosition || getSlidePosition(index, total);
+  const fallbackPosition = "center";
   const fallbackLayer = createDefaultLayer({ text: fallbackText, position: fallbackPosition });
   if (!Array.isArray(slide.textLayers) || !slide.textLayers.length) {
     return [fallbackLayer];
   }
-  return slide.textLayers.map((layer) => normalizeLayer(layer, fallbackLayer));
+  return slide.textLayers.map((layer) =>
+    normalizeLayer(
+      {
+        ...layer,
+        align: "center",
+        x: 540,
+        y: 960,
+      },
+      { ...fallbackLayer, y: 960 }
+    )
+  );
 }
 
 function isPostizSubscriptionError(error) {
@@ -504,7 +513,7 @@ function createApp(config = {}) {
           imageBuffer,
           text: slide.reviewedEnglish || slide.ocrEnglish,
           outputPath,
-          position: slide.preferredPosition || getSlidePosition(index, run.slides.length),
+          position: "center",
           textLayers,
         });
 
