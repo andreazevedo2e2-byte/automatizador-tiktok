@@ -36,7 +36,7 @@ body,
 
 body {
   margin: 0;
-  overflow: hidden;
+  overflow: auto;
   background:
     radial-gradient(circle at 14% 0%, rgba(77, 242, 165, 0.16), transparent 28%),
     radial-gradient(circle at 90% 10%, rgba(255, 135, 88, 0.14), transparent 26%),
@@ -71,12 +71,12 @@ a {
 
 .app-shell {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
   display: grid;
-  grid-template-columns: 238px minmax(0, 1fr);
-  gap: 14px;
-  padding: 14px;
-  overflow: hidden;
+  grid-template-columns: 198px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  overflow: visible;
 }
 
 .step-rail,
@@ -90,22 +90,23 @@ a {
 }
 
 .step-rail {
-  height: 100%;
+  min-height: calc(100vh - 20px);
+  height: fit-content;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 26px;
-  padding: 20px;
-  border-radius: var(--radius-xl);
+  gap: 16px;
+  padding: 14px;
+  border-radius: 28px;
   background: linear-gradient(180deg, rgba(17, 19, 27, 0.96), rgba(5, 6, 10, 0.96));
-  overflow: hidden;
+  overflow: auto;
 }
 
 .brand-mark {
-  width: 58px;
-  height: 58px;
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
-  border-radius: 20px;
+  border-radius: 18px;
   background: linear-gradient(135deg, var(--green), var(--orange));
   color: #050609;
   font-family: "Archivo Black", sans-serif;
@@ -115,17 +116,17 @@ a {
 .step-list {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .rail-step {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
-  padding: 12px;
+  padding: 9px;
   border: 1px solid transparent;
-  border-radius: 20px;
+  border-radius: 17px;
   color: var(--muted);
   transition: border 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
@@ -143,8 +144,8 @@ a {
 }
 
 .rail-step__number {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border-radius: 15px;
@@ -170,21 +171,21 @@ a {
 }
 
 .rail-step strong {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .rail-step span {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .studio {
   position: relative;
-  height: 100%;
+  min-height: calc(100vh - 20px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-  border-radius: 36px;
+  overflow: visible;
+  border-radius: 30px;
   background:
     linear-gradient(180deg, rgba(20, 23, 31, 0.94), rgba(7, 8, 12, 0.96)),
     var(--panel);
@@ -208,8 +209,8 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 18px;
-  padding: 20px 24px 0;
+  gap: 14px;
+  padding: 16px 18px 0;
 }
 
 .kicker,
@@ -234,8 +235,8 @@ h2 {
 
 h1 {
   font-family: "Archivo Black", sans-serif;
-  font-size: clamp(32px, 4.2vw, 58px);
-  line-height: 0.88;
+  font-size: clamp(30px, 3.5vw, 52px);
+  line-height: 0.92;
   letter-spacing: -0.045em;
 }
 
@@ -246,11 +247,11 @@ h2 {
 }
 
 .status-pill {
-  width: min(280px, 32vw);
+  width: min(238px, 28vw);
   display: grid;
   gap: 3px;
-  padding: 14px 16px;
-  border-radius: 22px;
+  padding: 12px 14px;
+  border-radius: 20px;
   background: rgba(255, 255, 255, 0.065);
 }
 
@@ -260,7 +261,7 @@ h2 {
 }
 
 .status-pill strong {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .status-pill small,
@@ -280,11 +281,11 @@ h2 {
   position: relative;
   z-index: 1;
   min-height: 0;
-  height: calc(100vh - 140px);
-  margin: 14px 24px 24px;
-  padding: 22px;
-  overflow: hidden;
-  border-radius: var(--radius-xl);
+  min-height: calc(100vh - 150px);
+  margin: 10px 18px 18px;
+  padding: 18px;
+  overflow: visible;
+  border-radius: 28px;
   background:
     radial-gradient(circle at top right, rgba(77, 242, 165, 0.13), transparent 30%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.082), rgba(255, 255, 255, 0.036));
@@ -351,7 +352,7 @@ input {
 
 textarea {
   min-height: 96px;
-  resize: none;
+  resize: vertical;
 }
 
 .input-group.tall {
@@ -359,10 +360,11 @@ textarea {
 }
 
 .input-group.tall textarea {
-  min-height: 0;
-  height: 100%;
-  font-size: clamp(22px, 2.2vw, 34px);
-  line-height: 1.36;
+  min-height: 300px;
+  height: clamp(320px, 42vh, 520px);
+  font-size: clamp(20px, 1.7vw, 30px);
+  line-height: 1.42;
+  resize: vertical;
 }
 
 input:focus,
@@ -384,7 +386,7 @@ textarea:focus {
 }
 
 .action-button {
-  min-height: 52px;
+  min-height: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -417,8 +419,8 @@ textarea:focus {
 
 .huge-action {
   width: fit-content;
-  min-height: 66px;
-  padding-inline: 28px;
+  min-height: 60px;
+  padding-inline: 24px;
   font-size: 18px;
 }
 
@@ -443,7 +445,7 @@ button:disabled,
 .review-stage {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 16px;
+  gap: 18px;
 }
 
 .review-toolbar {
@@ -451,11 +453,11 @@ button:disabled,
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
-  align-items: center;
+  align-items: end;
 }
 
 .review-toolbar h2 {
-  font-size: clamp(26px, 2.55vw, 38px);
+  font-size: clamp(30px, 2.9vw, 46px);
 }
 
 .review-toolbar p,
@@ -485,25 +487,26 @@ button:disabled,
 .download-workbench {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(350px, 0.95fr) minmax(430px, 1.05fr);
-  gap: 18px;
+  grid-template-columns: minmax(390px, 0.9fr) minmax(440px, 1.1fr);
+  gap: 22px;
+  align-items: start;
 }
 
 .story-column {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 14px;
-  overflow: hidden;
+  grid-template-rows: auto auto;
+  gap: 16px;
+  overflow: visible;
 }
 
 .phone-preview {
   min-height: 0;
-  width: min(390px, 100%);
-  height: 100%;
+  width: min(410px, 100%);
+  height: auto;
   justify-self: center;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   gap: 10px;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.13);
@@ -526,7 +529,9 @@ button:disabled,
 .phone-screen {
   position: relative;
   min-height: 0;
-  height: min(100%, 62vh);
+  width: 100%;
+  height: auto;
+  max-height: 640px;
   aspect-ratio: 9 / 16;
   justify-self: center;
   overflow: hidden;
@@ -541,7 +546,7 @@ button:disabled,
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: contain;
+  object-fit: cover;
 }
 
 .empty-screen {
@@ -638,11 +643,11 @@ button:disabled,
 }
 
 .slide-rail {
-  min-height: 86px;
+  min-height: 90px;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 64px;
-  gap: 8px;
+  grid-auto-columns: 68px;
+  gap: 9px;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 3px 2px 10px;
@@ -686,29 +691,29 @@ button:disabled,
 .editor-panel,
 .download-panel {
   min-height: 0;
-  padding: 18px;
+  padding: 20px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: rgba(0, 0, 0, 0.22);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .review-editor-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
-  gap: 14px;
+  grid-template-rows: auto auto auto;
+  gap: 16px;
 }
 
 .post-meta-panel {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
 }
 
 .post-meta-panel textarea {
-  min-height: 92px;
-  max-height: 120px;
-  font-size: 15px;
+  min-height: 112px;
+  max-height: 180px;
+  font-size: 16px;
   line-height: 1.5;
 }
 
