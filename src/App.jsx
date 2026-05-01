@@ -17,7 +17,8 @@ import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
-const apiBase = envApiBase || productionApiBase;
+const isLoopbackApiBase = (value = "") => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(value);
+const apiBase = envApiBase && !isLoopbackApiBase(envApiBase) ? envApiBase : productionApiBase;
 const currentRunStorageKey = "automatizador-tiktok.currentRunId";
 const draftStorageKey = "automatizador-tiktok.draft";
 const sampleUrl =
