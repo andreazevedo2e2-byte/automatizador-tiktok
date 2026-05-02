@@ -878,7 +878,7 @@ function EditStage({
   );
 }
 
-function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onConnectPostiz, onQueue, publishing }) {
+function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onConnectPostiz, onQueue, publishing, postizStatus }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set((run.destinations || []).map((destination) => destination.accountId)));
   const [scheduledAt, setScheduledAt] = useState("");
   const caption = [run.captionEnglish, hashtagsToText(run.hashtags)].filter(Boolean).join(" ").trim();
@@ -935,11 +935,17 @@ function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onCon
 
           {!accounts.length && (
             <div className="empty-publish">
-              <p>Nenhuma conta TikTok carregada. Conecte o Postiz uma vez e depois escolha as contas.</p>
-              <button className="action-button main-action" type="button" onClick={onConnectPostiz}>
-                <Send size={16} />
-                Conectar Postiz
-              </button>
+              <p>
+                {postizStatus?.usingSelfHostedApiKey
+                  ? "O Postiz self-hosted ja esta configurado por API key. Se nenhuma conta aparecer, falta conectar o canal TikTok dentro do painel do seu Postiz ou configurar o app TikTok Developer no servidor."
+                  : "Nenhuma conta TikTok carregada. Conecte o Postiz uma vez e depois escolha as contas."}
+              </p>
+              {postizStatus?.canStartOAuth ? (
+                <button className="action-button main-action" type="button" onClick={onConnectPostiz}>
+                  <Send size={16} />
+                  Conectar Postiz
+                </button>
+              ) : null}
             </div>
           )}
 
@@ -1058,6 +1064,7 @@ export function App() {
   const [accounts, setAccounts] = useState([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [postizStatus, setPostizStatus] = useState({ mode: "unconfigured", canStartOAuth: false, usingSelfHostedApiKey: false });
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [selectedStage, setSelectedStage] = useState("extract");
@@ -1125,6 +1132,7 @@ export function App() {
 
   useEffect(() => {
     if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
+      loadPostizStatus();
       loadPostizAccounts();
     }
   }, [activeStage]);
@@ -1476,7 +1484,23 @@ export function App() {
     }
   }
 
+  async function loadPostizStatus() {
+    try {
+      const response = await fetch(`${apiBase}/api/postiz/status`);
+      const data = await readJsonResponse(response, "Nao consegui ler o status do Postiz.");
+      if (!response.ok) throw new Error(data.error || "Nao consegui ler o status do Postiz.");
+      setPostizStatus(data);
+    } catch (requestError) {
+      console.warn("[postiz] status failed", requestError);
+    }
+  }
+
   async function connectPostiz() {
+    if (postizStatus?.usingSelfHostedApiKey) {
+      setStatus("Postiz self-hosted ja esta ligado por API key. Vou apenas recarregar as contas.");
+      await loadPostizAccounts();
+      return;
+    }
     setError("");
     setStatus("Abrindo autorização do Postiz...");
     try {
@@ -1532,6 +1556,7 @@ export function App() {
     setStatus(`Etapa ${steps[stageIndex[stepKey]]?.title || stepKey} aberta.`);
 
     if (stepKey === "publish" && !accounts.length && !loadingAccounts) {
+      loadPostizStatus();
       loadPostizAccounts();
     }
   }
@@ -1621,6 +1646,7 @@ export function App() {
             onConnectPostiz={connectPostiz}
             onQueue={queuePostizDraft}
             publishing={publishing}
+            postizStatus={postizStatus}
           />
         )}
 

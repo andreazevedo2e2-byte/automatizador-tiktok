@@ -115,6 +115,18 @@ function createApp(config = {}) {
     isHeadless,
   };
 
+  function getPostizMode(hasSavedToken = false) {
+    const hasApiKey = Boolean(String(process.env.POSTIZ_API_KEY || "").trim());
+    const hasOAuthApp =
+      Boolean(String(process.env.POSTIZ_CLIENT_ID || "").trim()) &&
+      Boolean(String(process.env.POSTIZ_CLIENT_SECRET || "").trim());
+
+    if (hasApiKey) return "api-key";
+    if (hasSavedToken) return "oauth-token";
+    if (hasOAuthApp) return "oauth";
+    return "unconfigured";
+  }
+
   app.use(
     cors({
       origin(origin, callback) {
@@ -158,6 +170,28 @@ function createApp(config = {}) {
     }
   });
 
+  app.get("/api/postiz/status", async (_req, res) => {
+    const savedToken = await postizTokenStore.loadToken();
+    const mode = getPostizMode(Boolean(savedToken?.accessToken));
+    const canStartOAuth = mode === "oauth";
+
+    res.json({
+      mode,
+      canStartOAuth,
+      configured: mode !== "unconfigured",
+      usingSelfHostedApiKey: mode === "api-key",
+      baseUrl: process.env.POSTIZ_URL || "",
+      message:
+        mode === "api-key"
+          ? "Postiz self-hosted configurado por API key."
+          : mode === "oauth-token"
+            ? "Postiz conectado por OAuth."
+            : mode === "oauth"
+              ? "Postiz Cloud aguardando autorizacao OAuth."
+              : "Postiz ainda nao configurado.",
+    });
+  });
+
   app.get("/api/postiz/accounts", async (_req, res) => {
     try {
       res.json({ accounts: await services.postiz.listTikTokAccounts() });
@@ -171,6 +205,11 @@ function createApp(config = {}) {
 
   app.get("/api/postiz/oauth/start", async (_req, res) => {
     try {
+      if (getPostizMode(false) === "api-key") {
+        return res.status(409).json({
+          error: "POSTIZ_API_KEY ja esta configurada. No modo self-hosted, o OAuth do Postiz Cloud nao e necessario.",
+        });
+      }
       const state = randomOAuthState();
       await postizTokenStore.saveState(state);
       res.json({
