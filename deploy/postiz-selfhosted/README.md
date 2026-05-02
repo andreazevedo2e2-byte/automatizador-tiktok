@@ -6,28 +6,25 @@ Quando essas duas variaveis estiverem preenchidas no backend, o app para de depe
 ## O que usar no EasyPanel
 
 1. Crie um novo servico `Compose`.
-2. Use como base o `docker-compose.yaml` oficial do Postiz:
-   - https://docs.postiz.com/installation/docker-compose
-   - https://github.com/gitroomhq/postiz-docker-compose
-3. Configure as variaveis principais do Postiz com base no arquivo `postiz.env.example` desta pasta.
-4. Exponha o Postiz em um dominio HTTPS publico.
+2. Na aba `Git`, use este proprio repositorio.
+3. Configure:
+   - `Repository URL`: `https://github.com/andreazevedo2e2-byte/automatizador-tiktok`
+   - `Branch`: `main`
+   - `Build Path`: `/deploy/postiz-selfhosted`
+   - `Docker Compose File`: `docker-compose.easypanel.yaml`
+4. Na aba `Environment`, cole o conteudo de `postiz.env.example` adaptado.
+5. Exponha o servico `postiz` em um dominio HTTPS publico.
 
 ## Variaveis minimas
 
-- `MAIN_URL=https://seu-postiz.dominio.com`
-- `FRONTEND_URL=https://seu-postiz.dominio.com`
-- `NEXT_PUBLIC_BACKEND_URL=https://seu-postiz.dominio.com/api`
-- `JWT_SECRET=troque-por-um-valor-grande`
-- `DATABASE_URL=postgresql://postiz-user:postiz-password@postiz-postgres:5432/postiz-db-local`
-- `REDIS_URL=redis://postiz-redis:6379`
-- `BACKEND_INTERNAL_URL=http://localhost:3000`
-- `TEMPORAL_ADDRESS=temporal:7233`
-- `IS_GENERAL=true`
-- `DISABLE_REGISTRATION=false`
-- `RUN_CRON=true`
-- `STORAGE_PROVIDER=local`
-- `UPLOAD_DIRECTORY=/uploads`
-- `NEXT_PUBLIC_UPLOAD_DIRECTORY=/uploads`
+- `POSTIZ_MAIN_URL=https://seu-postiz.dominio.com`
+- `POSTIZ_JWT_SECRET=...`
+- `POSTIZ_DB_USER=postiz-user`
+- `POSTIZ_DB_PASSWORD=...`
+- `POSTIZ_DB_NAME=postiz-db`
+- `TEMPORAL_DB_USER=temporal`
+- `TEMPORAL_DB_PASSWORD=...`
+- `TEMPORAL_DB_NAME=temporal`
 
 ## TikTok
 
