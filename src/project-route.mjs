@@ -5,10 +5,6 @@ export function buildProjectRoute(runId) {
 }
 
 export function parseProjectRoute(pathname = "") {
-  if (pathname === "/callback") {
-    return { view: "callback" };
-  }
-
   const match = pathname.match(/^\/projeto\/([^/]+)\/?$/i);
   if (match) {
     return {

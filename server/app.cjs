@@ -9,14 +9,6 @@ const JSZip = require("jszip");
 
 const { compositeSlide, createDefaultLayer, normalizeLayer } = require("./lib/compositor.cjs");
 const { createOcrRunner } = require("./lib/ocr.cjs");
-const {
-  buildPostizAuthorizeUrl,
-  createPostizClient,
-  exchangePostizOAuthCode,
-  randomOAuthState,
-} = require("./lib/postiz-client.cjs");
-const { createPostizTokenStore } = require("./lib/postiz-token-store.cjs");
-const { createPublishStore, normalizeDestination, normalizePostStatus } = require("./lib/publish-store.cjs");
 const { createRunStore } = require("./lib/run-store.cjs");
 const {
   buildCaptionEnglish,
@@ -44,15 +36,15 @@ function buildRunResponse(run) {
     captionPortuguese: run.captionPortuguese,
     hashtags: run.hashtags || [],
     export: run.export || null,
-    destinations: run.destinations || [],
+    driveTarget: run.driveTarget || null,
+    driveExport: run.driveExport || null,
     slides: run.slides,
   };
 }
 
-function buildSlideLayers(slide, index, total) {
+function buildSlideLayers(slide) {
   const fallbackText = slide.reviewedEnglish || slide.ocrEnglish || "";
-  const fallbackPosition = "center";
-  const fallbackLayer = createDefaultLayer({ text: fallbackText, position: fallbackPosition });
+  const fallbackLayer = createDefaultLayer({ text: fallbackText, position: "center" });
   if (!Array.isArray(slide.textLayers) || !slide.textLayers.length) {
     return [fallbackLayer];
   }
@@ -69,16 +61,55 @@ function buildSlideLayers(slide, index, total) {
   );
 }
 
-function isPostizSubscriptionError(error) {
-  return /assinatura ativa|no existe uma assinatura|no subscription found/i.test(String(error?.message || ""));
+function normalizeDriveTarget(input = {}) {
+  const folderId = String(input.folderId || "").trim();
+  const folderName = String(input.folderName || "").trim();
+  if (!folderId || !folderName) {
+    throw new Error("Escolha uma pasta válida do Google Drive.");
+  }
+  return {
+    folderId,
+    folderName,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeDriveExport(input = {}) {
+  const profileFolderId = String(input.profileFolderId || "").trim();
+  const profileFolderName = String(input.profileFolderName || "").trim();
+  const postFolderId = String(input.postFolderId || "").trim();
+  const postFolderName = String(input.postFolderName || "").trim();
+  const files = Array.isArray(input.files)
+    ? input.files
+        .map((file) => ({
+          id: String(file.id || "").trim(),
+          name: String(file.name || "").trim(),
+          mimeType: String(file.mimeType || "").trim(),
+          webViewLink: String(file.webViewLink || "").trim(),
+          webContentLink: String(file.webContentLink || "").trim(),
+        }))
+        .filter((file) => file.id && file.name)
+    : [];
+
+  if (!profileFolderId || !profileFolderName || !postFolderId || !postFolderName) {
+    throw new Error("O envio para o Google Drive voltou incompleto.");
+  }
+
+  return {
+    profileFolderId,
+    profileFolderName,
+    postFolderId,
+    postFolderName,
+    postFolderUrl: String(input.postFolderUrl || `https://drive.google.com/drive/folders/${postFolderId}`).trim(),
+    files,
+    exportedAt: new Date().toISOString(),
+  };
 }
 
 function createApp(config = {}) {
   const app = express();
   const rootDir = config.rootDir || path.resolve(__dirname, "..");
   const store = config.store || createRunStore(rootDir);
-  const publishStore = config.publishStore || createPublishStore(config.publishStoreConfig);
-  const postizTokenStore = config.postizTokenStore || createPostizTokenStore(rootDir);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const port = Number(process.env.PORT || 4141);
   const host = process.env.HOST || "0.0.0.0";
@@ -105,7 +136,6 @@ function createApp(config = {}) {
     captureSlidesViaSnapTik,
     translateTexts,
     runOcr: createOcrRunner(rootDir),
-    postiz: createPostizClient({ tokenStore: postizTokenStore, ...config.postizConfig }),
     ...config.services,
   };
 
@@ -114,18 +144,6 @@ function createApp(config = {}) {
     profileDir,
     isHeadless,
   };
-
-  function getPostizMode(hasSavedToken = false) {
-    const hasApiKey = Boolean(String(process.env.POSTIZ_API_KEY || "").trim());
-    const hasOAuthApp =
-      Boolean(String(process.env.POSTIZ_CLIENT_ID || "").trim()) &&
-      Boolean(String(process.env.POSTIZ_CLIENT_SECRET || "").trim());
-
-    if (hasApiKey) return "api-key";
-    if (hasSavedToken) return "oauth-token";
-    if (hasOAuthApp) return "oauth";
-    return "unconfigured";
-  }
 
   app.use(
     cors({
@@ -142,15 +160,7 @@ function createApp(config = {}) {
   app.use("/runs", express.static(store.runsDir));
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, mode: "preview-and-zip", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
-  });
-
-  app.get("/api/history", async (_req, res) => {
-    try {
-      res.json({ items: await publishStore.listHistory() });
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not load history." });
-    }
+    res.json({ ok: true, mode: "preview-and-drive", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
   });
 
   app.get("/api/projects", async (_req, res) => {
@@ -158,97 +168,6 @@ function createApp(config = {}) {
       res.json({ items: await store.listRuns() });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not load projects." });
-    }
-  });
-
-  app.get("/api/postiz/health", async (_req, res) => {
-    try {
-      const accounts = await services.postiz.listTikTokAccounts();
-      res.json({ ok: true, accounts });
-    } catch (error) {
-      res.status(400).json({ ok: false, error: error.message || "Postiz is not configured." });
-    }
-  });
-
-  app.get("/api/postiz/status", async (_req, res) => {
-    const savedToken = await postizTokenStore.loadToken();
-    const mode = getPostizMode(Boolean(savedToken?.accessToken));
-    const canStartOAuth = mode === "oauth";
-
-    res.json({
-      mode,
-      canStartOAuth,
-      configured: mode !== "unconfigured",
-      usingSelfHostedApiKey: mode === "api-key",
-      baseUrl: process.env.POSTIZ_URL || "",
-      message:
-        mode === "api-key"
-          ? "Postiz self-hosted configurado por API key."
-          : mode === "oauth-token"
-            ? "Postiz conectado por OAuth."
-            : mode === "oauth"
-              ? "Postiz Cloud aguardando autorizacao OAuth."
-              : "Postiz ainda nao configurado.",
-    });
-  });
-
-  app.get("/api/postiz/accounts", async (_req, res) => {
-    try {
-      res.json({ accounts: await services.postiz.listTikTokAccounts() });
-    } catch (error) {
-      if (isPostizSubscriptionError(error)) {
-        return res.json({ accounts: [], warning: error.message });
-      }
-      res.status(400).json({ error: error.message || "Could not list Postiz accounts." });
-    }
-  });
-
-  app.get("/api/postiz/oauth/start", async (_req, res) => {
-    try {
-      if (getPostizMode(false) === "api-key") {
-        return res.status(409).json({
-          error: "POSTIZ_API_KEY ja esta configurada. No modo self-hosted, o OAuth do Postiz Cloud nao e necessario.",
-        });
-      }
-      const state = randomOAuthState();
-      await postizTokenStore.saveState(state);
-      res.json({
-        authorizeUrl: buildPostizAuthorizeUrl({
-          frontendUrl: process.env.POSTIZ_FRONTEND_URL || "https://platform.postiz.com",
-          clientId: process.env.POSTIZ_CLIENT_ID,
-          state,
-        }),
-      });
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not start Postiz OAuth." });
-    }
-  });
-
-  app.post("/api/postiz/oauth/callback", async (req, res) => {
-    try {
-      const { code, state, error } = req.body || {};
-      if (error) throw new Error(`Postiz authorization denied: ${error}`);
-      const validState = await postizTokenStore.consumeState(state);
-      if (!validState) throw new Error("Postiz OAuth state inválido. Inicie a conexão novamente.");
-
-      const token = await exchangePostizOAuthCode({
-        apiUrl: process.env.POSTIZ_API_URL || process.env.POSTIZ_URL || "https://api.postiz.com",
-        clientId: process.env.POSTIZ_CLIENT_ID,
-        clientSecret: process.env.POSTIZ_CLIENT_SECRET,
-        code,
-      });
-      await postizTokenStore.saveToken(token);
-      try {
-        const accounts = await services.postiz.listTikTokAccounts();
-        res.json({ ok: true, accounts });
-      } catch (accountError) {
-        if (isPostizSubscriptionError(accountError)) {
-          return res.json({ ok: true, accounts: [], warning: accountError.message });
-        }
-        throw accountError;
-      }
-    } catch (callbackError) {
-      res.status(400).json({ error: callbackError.message || "Could not complete Postiz OAuth." });
     }
   });
 
@@ -313,8 +232,6 @@ function createApp(config = {}) {
       try {
         slidePaths = await services.captureSlidesViaSnapTik(sourceUrl, store.getSlidesDir(runId));
       } catch (snapTikError) {
-        console.error("[extract] SnapTik failed", snapTikError);
-
         if (!allowDirectFallback) {
           throw new Error(
             `A extração automática via SnapTik falhou. ${snapTikError?.message || "Tente novamente ou use OCR via imagens."}`
@@ -322,19 +239,11 @@ function createApp(config = {}) {
         }
 
         provider = "tiktok-direct";
-
-        try {
-          slidePaths = await services.captureSlidesDirectly({
-            sourceUrl,
-            slidesDir: store.getSlidesDir(runId),
-            sharedBrowserContext,
-          });
-        } catch (directError) {
-          console.error("[extract] TikTok direct fallback failed", directError);
-          throw new Error(
-            `SnapTik falhou (${snapTikError?.message || "sem detalhe"}) e o fallback direto do TikTok também falhou (${directError?.message || "sem detalhe"}).`
-          );
-        }
+        slidePaths = await services.captureSlidesDirectly({
+          sourceUrl,
+          slidesDir: store.getSlidesDir(runId),
+          sharedBrowserContext,
+        });
       }
 
       const slides = await services.runOcr(slidePaths, runId);
@@ -360,14 +269,14 @@ function createApp(config = {}) {
         captionPortuguese,
         hashtags: normalizeHashtags([...splitHashtags(captionEnglish), ...extractedHashtags]),
         export: null,
+        driveTarget: null,
+        driveExport: null,
         slides: localizedSlides,
       };
 
       await store.saveRun(run);
-      await publishStore.upsertRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
-      console.error("[extract] request failed", error);
       res.status(400).json({ error: error.message || "Extraction failed." });
     }
   });
@@ -404,11 +313,12 @@ function createApp(config = {}) {
         captionPortuguese: "",
         hashtags: [],
         export: null,
+        driveTarget: null,
+        driveExport: null,
         slides: buildTranslatedSlides(slides, slideTranslations),
       };
 
       await store.saveRun(run);
-      await publishStore.upsertRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
       res.status(400).json({ error: error.message || "Upload OCR failed." });
@@ -442,7 +352,6 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not save review." });
@@ -495,7 +404,6 @@ function createApp(config = {}) {
 
       const nextRun = { ...run, stage: "render", slides: nextSlides };
       await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not upload replacement images." });
@@ -506,9 +414,9 @@ function createApp(config = {}) {
     try {
       const run = await store.loadRun(req.params.runId);
       const slideIndex = Number(req.params.index);
-      if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide invalido.");
+      if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
       const slide = run.slides.find((entry) => entry.index === slideIndex);
-      if (!slide) throw new Error("Slide nao encontrado.");
+      if (!slide) throw new Error("Slide não encontrado.");
       if (!req.file) throw new Error("Envie uma imagem para trocar o fundo.");
 
       const extension = path.extname(req.file.originalname || "") || ".jpg";
@@ -528,7 +436,6 @@ function createApp(config = {}) {
 
       const nextRun = { ...run, slides: nextSlides };
       await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not replace slide background." });
@@ -547,7 +454,7 @@ function createApp(config = {}) {
       for (const [index, slide] of run.slides.entries()) {
         const imageBuffer = await fs.readFile(slide.replacementImagePath);
         const outputPath = path.join(store.getRenderedDir(run.runId), `slide-${String(index + 1).padStart(2, "0")}.jpg`);
-        const textLayers = buildSlideLayers(slide, index, run.slides.length);
+        const textLayers = buildSlideLayers(slide);
         await compositeSlide({
           imageBuffer,
           text: slide.reviewedEnglish || slide.ocrEnglish,
@@ -576,116 +483,9 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Render failed." });
-    }
-  });
-
-  app.post("/api/runs/:runId/destinations", async (req, res) => {
-    try {
-      const run = await store.loadRun(req.params.runId);
-      const destinations = (req.body.destinations || [])
-        .map((destination) => normalizeDestination(run.runId, destination))
-        .filter((destination) => destination.accountId);
-      if (!destinations.length) throw new Error("Escolha pelo menos uma conta TikTok.");
-
-      const nextRun = {
-        ...run,
-        stage: "publish",
-        destinations,
-      };
-      await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
-      await publishStore.saveDestinations(run.runId, destinations);
-      await publishStore.recordEvent({
-        runId: run.runId,
-        type: "destinations_saved",
-        message: `${destinations.length} destino(s) selecionado(s).`,
-        details: { destinations },
-      });
-      res.json(buildRunResponse(nextRun));
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not save destinations." });
-    }
-  });
-
-  app.post("/api/runs/:runId/postiz/queue", async (req, res) => {
-    try {
-      const run = await store.loadRun(req.params.runId);
-      if (!run.slides.every((slide) => slide.renderedImagePath)) {
-        throw new Error("Gere o slideshow antes de enviar ao Postiz.");
-      }
-
-      const requestedDestinations = Array.isArray(req.body.destinations) && req.body.destinations.length
-        ? req.body.destinations
-        : run.destinations || [];
-      const destinations = requestedDestinations
-        .map((destination) => normalizeDestination(run.runId, destination))
-        .filter((destination) => destination.accountId);
-      if (!destinations.length) throw new Error("Escolha pelo menos uma conta TikTok.");
-
-      await publishStore.saveDestinations(run.runId, destinations);
-      const caption = [run.captionEnglish, ...(run.hashtags || [])].filter(Boolean).join(" ").trim();
-      const mediaFiles = run.slides.map((slide) => ({ filePath: slide.renderedImagePath }));
-      const results = [];
-      for (const destination of destinations) {
-        try {
-          const postizResult = await services.postiz.createTikTokDraft({
-            accountId: destination.accountId,
-            caption,
-            mediaFiles,
-            scheduledAt: destination.scheduledAt,
-            tags: req.body.tags || [],
-          });
-          const postizPostId = Array.isArray(postizResult.posts) ? postizResult.posts[0]?.postId : postizResult.posts?.postId;
-          const updated = {
-            ...destination,
-            status: "waiting_manual_publish",
-            postizPostId: postizPostId || null,
-            postizResponse: postizResult.posts,
-            error: null,
-          };
-          await publishStore.updateDestination(run.runId, destination.accountId, updated);
-          await publishStore.recordEvent({
-            runId: run.runId,
-            accountId: destination.accountId,
-            type: "sent_to_postiz",
-            message: `Rascunho enviado para ${destination.accountName || destination.accountHandle || destination.accountId}.`,
-            details: { postizPostId },
-          });
-          results.push(updated);
-        } catch (error) {
-          const failed = {
-            ...destination,
-            status: "failed",
-            error: error.message || "Postiz failed.",
-          };
-          await publishStore.updateDestination(run.runId, destination.accountId, failed);
-          await publishStore.recordEvent({
-            runId: run.runId,
-            accountId: destination.accountId,
-            type: "failed",
-            message: failed.error,
-          });
-          results.push(failed);
-        }
-      }
-
-      const nextRun = {
-        ...run,
-        stage: "publish",
-        destinations: results.map((destination) => ({
-          ...destination,
-          status: normalizePostStatus(destination.status),
-        })),
-      };
-      await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
-      res.json({ run: buildRunResponse(nextRun), destinations: nextRun.destinations });
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not send to Postiz." });
     }
   });
 
@@ -697,9 +497,9 @@ function createApp(config = {}) {
       const layers = Array.isArray(req.body?.layers) ? req.body.layers : [];
       if (!layers.length) throw new Error("Envie pelo menos uma camada de texto.");
 
-      const nextSlides = run.slides.map((slide, idx) => {
+      const nextSlides = run.slides.map((slide) => {
         if (slide.index !== slideIndex) return slide;
-        const normalized = buildSlideLayers({ ...slide, textLayers: layers }, idx, run.slides.length);
+        const normalized = buildSlideLayers({ ...slide, textLayers: layers });
         return {
           ...slide,
           textLayers: normalized,
@@ -714,32 +514,46 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
-      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not save text layers." });
     }
   });
 
-  app.put("/api/runs/:runId/destinations/:accountId/status", async (req, res) => {
+  app.put("/api/runs/:runId/drive-target", async (req, res) => {
     try {
       const run = await store.loadRun(req.params.runId);
-      const status = normalizePostStatus(req.body.status);
-      const destinations = (run.destinations || []).map((destination) =>
-        destination.accountId === req.params.accountId ? { ...destination, status, updatedAt: new Date().toISOString() } : destination
-      );
-      const nextRun = { ...run, destinations };
+      const driveTarget = normalizeDriveTarget(req.body || {});
+      const nextRun = {
+        ...run,
+        stage: "publish",
+        driveTarget,
+      };
       await store.saveRun(nextRun);
-      await publishStore.updateDestination(run.runId, req.params.accountId, { status });
-      await publishStore.recordEvent({
-        runId: run.runId,
-        accountId: req.params.accountId,
-        type: "status_changed",
-        message: `Status alterado para ${status}.`,
-      });
       res.json(buildRunResponse(nextRun));
     } catch (error) {
-      res.status(400).json({ error: error.message || "Could not update status." });
+      res.status(400).json({ error: error.message || "Could not save the Drive folder." });
+    }
+  });
+
+  app.put("/api/runs/:runId/drive-export", async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
+      const driveExport = normalizeDriveExport(req.body || {});
+      const nextRun = {
+        ...run,
+        stage: "publish",
+        driveTarget: {
+          folderId: driveExport.profileFolderId,
+          folderName: driveExport.profileFolderName,
+          savedAt: new Date().toISOString(),
+        },
+        driveExport,
+      };
+      await store.saveRun(nextRun);
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not save the Drive export." });
     }
   });
 
@@ -786,10 +600,6 @@ function createApp(config = {}) {
               reviewedPortuguese: slide.reviewedPortuguese,
               renderedImageUrl: slide.renderedImageUrl,
             })),
-            postiz: {
-              caption: run.captionEnglish,
-              mediaFiles: run.slides.map((slide) => path.basename(slide.renderedImagePath)),
-            },
           },
           null,
           2
@@ -798,7 +608,7 @@ function createApp(config = {}) {
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       res.setHeader("Content-Type", "application/zip");
-      res.setHeader("Content-Disposition", `attachment; filename=\"${run.runId}.zip\"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${run.runId}.zip"`);
       res.send(buffer);
     } catch (error) {
       res.status(400).json({ error: error.message || "ZIP export failed." });

@@ -1,64 +1,71 @@
 # Automatizador TikTok
 
-Local web app for capturing TikTok photo slideshows and running OCR.
+App local/web para capturar slideshows do TikTok, extrair o texto, revisar em português, aplicar em novas imagens e enviar o resultado final para uma pasta do Google Drive.
 
-## Setup
+## Fluxo atual
 
-1. Copy `.env.example` to `.env`.
-2. Run:
+1. Cole o link do slideshow do TikTok ou envie prints.
+2. Revise o texto em português.
+3. Envie as novas imagens na ordem desejada.
+4. Gere o preview final.
+5. Escolha uma pasta de perfil no Google Drive.
+6. O app cria automaticamente uma subpasta como `post 1`, `post 2`, `post 3` e envia:
+   - slides renderizados
+   - `caption.txt`
+   - `hashtags.txt`
+   - `post.json`
+
+## Setup local
+
+1. Copie `.env.example` para `.env`.
+2. Preencha:
+   - `VITE_API_BASE`
+   - `VITE_GOOGLE_CLIENT_ID`
+3. Rode:
 
 ```bash
+npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`.
+Abra `http://127.0.0.1:5173`.
 
-## Notes
+## Variáveis principais
 
-- TikTok extraction uses a persistent Playwright browser profile in `browser-profile/`.
-- The backend prefers your installed Google Chrome, then Edge, then Playwright Chromium.
-- If TikTok asks for login, click `Open Login Browser`, log in, and run extraction again.
-- If TikTok blocks login, use `Upload Images` to OCR screenshots or downloaded slide images directly.
-- Each extraction is saved under `runs/<timestamp>/`.
-- The final step can send rendered slides to Postiz as a safe TikTok draft/upload flow.
-
-## Production (Vercel + VPS)
-
-### 1) Deploy backend on VPS (EasyPanel)
-
-Use service type Docker Compose and paste [docker-compose.yml](/C:/Users/andre/Documents/Codex/2026-04-29/codex-primeiro-eu-quero-que-voc/automatizador-tiktok/docker-compose.yml).
-
-Before deploy, edit:
-
+- `VITE_API_BASE=http://127.0.0.1:4141`
+- `VITE_GOOGLE_CLIENT_ID=seu-client-id-do-google`
 - `ALLOWED_ORIGINS=https://automatizador-tiktok.vercel.app`
-- `POSTIZ_URL=https://seu-postiz-na-vps.com`
-- `POSTIZ_API_KEY=...`
-- `SUPABASE_URL=...` and `SUPABASE_SERVICE_ROLE_KEY=...` if you want persistent history.
+- `SUPABASE_URL=...`
+- `SUPABASE_SERVICE_ROLE_KEY=...`
 
-Expose port `4141` via your domain, for example:
+## Produção
 
-- `https://api.seudominio.com`
+### Frontend
 
-### 2) Deploy frontend on Vercel
+Pode ser publicado na Vercel usando este diretório como raiz, com `vercel.json`.
 
-Project root: this folder (`automatizador-tiktok`), using [vercel.json](/C:/Users/andre/Documents/Codex/2026-04-29/codex-primeiro-eu-quero-que-voc/automatizador-tiktok/vercel.json).
+### Backend
 
-Live frontend:
+Pode ser publicado no VPS/EasyPanel usando [docker-compose.yml](/C:/Users/andre/Documents/Codex/2026-04-29/codex-primeiro-eu-quero-que-voc/automatizador-tiktok/docker-compose.yml).
 
-- `https://automatizador-tiktok.vercel.app`
+Antes do deploy, ajuste pelo menos:
 
-### 3) Login session flow
+- `ALLOWED_ORIGINS`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `VITE_GOOGLE_CLIENT_ID`
 
-In the deployed frontend:
+## Observações
 
-1. Click `Open Login Browser` once (this initializes profile session).
-2. If TikTok blocks login on the server environment, use `Upload Images` fallback.
-3. Keep `browser-profile` persistent volume mounted (already in compose).
+- A extração do TikTok usa perfil persistente do Playwright em `browser-profile/`.
+- O backend tenta Google Chrome, depois Edge, depois Chromium do Playwright.
+- Se o TikTok bloquear login, use `Upload Images` para OCR por prints.
+- Cada execução fica salva em `runs/<timestamp>/`.
+- O Google Drive lista as pastas reais da raiz da conta conectada; se você renomear a pasta no Drive, o nome atualizado aparece no app ao recarregar.
 
-## Postiz + Supabase
+## Supabase
 
-1. Install Postiz self-hosted on EasyPanel and connect your TikTok accounts there.
-2. Generate a Postiz API key and set `POSTIZ_URL` + `POSTIZ_API_KEY` in the backend.
-3. In Supabase SQL Editor, run `supabase/schema.sql`.
-4. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the backend, never in Vercel frontend env.
-5. The app sends posts as a draft/upload flow by default; publish/final approval stays manual in TikTok.
+Se quiser histórico persistente de runs e envios ao Drive:
+
+1. Rode `supabase/schema.sql` no SQL Editor.
+2. Configure `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` somente no backend.

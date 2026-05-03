@@ -1,29 +1,41 @@
 import {
   ArrowRight,
-  CalendarClock,
   Check,
   ChevronLeft,
   Clipboard,
   Download,
   ImagePlus,
   Loader2,
-  Palette,
   ScanText,
   Send,
   Sparkles,
-  Type,
+  Trash2,
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  clearDriveSession,
+  createDriveFolder,
+  listChildFolders,
+  listRootFolders,
+  nextPostFolderName,
+  persistDriveSession,
+  requestDriveAccess,
+  restoreDriveSession,
+  uploadBlobFile,
+  uploadTextFile,
+} from "./google-drive.js";
 import { buildProjectRoute, getUnlockedProjectStages, parseProjectRoute } from "./project-route.mjs";
 import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.js";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
 const isLoopbackApiBase = (value = "") => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(value);
 const apiBase = envApiBase && !isLoopbackApiBase(envApiBase) ? envApiBase : productionApiBase;
 const currentRunStorageKey = "automatizador-tiktok.currentRunId";
 const draftStorageKey = "automatizador-tiktok.draft";
+const driveSessionStorageKey = "automatizador-tiktok.googleDriveSession";
 const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 
@@ -32,7 +44,7 @@ const steps = [
   { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
   { key: "preview", number: "04", title: "Preview", hint: "Validar slideshow" },
-  { key: "publish", number: "05", title: "Publicar", hint: "Postiz e contas" },
+  { key: "publish", number: "05", title: "Enviar", hint: "Google Drive" },
 ];
 
 const stageByRun = {
@@ -83,27 +95,6 @@ function projectTitle(project) {
   return handle ? `Post @${handle}` : `Projeto ${project.runId}`;
 }
 
-function copyText(value) {
-  return navigator.clipboard.writeText(value || "");
-}
-
-function defaultTextLayer(slide = {}) {
-  return {
-    id: "main",
-    text: slide.reviewedEnglish || slide.ocrEnglish || "",
-    x: 540,
-    y: 1520,
-    width: 900,
-    fontSize: 62,
-    fontFamily: "sans-serif",
-    color: "#f8f3eb",
-    strokeColor: "rgba(5, 6, 8, 0.55)",
-    strokeWidth: 14,
-    align: "center",
-    hidden: false,
-  };
-}
-
 async function readJsonResponse(response, fallbackMessage) {
   const text = await response.text();
   try {
@@ -113,7 +104,7 @@ async function readJsonResponse(response, fallbackMessage) {
   }
 }
 
-function LoadingIcon({ active }) {
+function LoadingInline({ active }) {
   return active ? <Loader2 className="spin" size={18} /> : null;
 }
 
@@ -233,24 +224,8 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
         )}
         {total > 1 && (
           <>
-            <button
-              className="story-tap-zone story-tap-zone--left"
-              type="button"
-              onClick={onPrev}
-              disabled={!canGoBack}
-              aria-label="Slide anterior"
-            >
-              <span>Anterior</span>
-            </button>
-            <button
-              className="story-tap-zone story-tap-zone--right"
-              type="button"
-              onClick={onNext}
-              disabled={!canGoNext}
-              aria-label="Próximo slide"
-            >
-              <span>Próximo</span>
-            </button>
+            <button className="story-tap-zone story-tap-zone--left" type="button" onClick={onPrev} disabled={!canGoBack} aria-label="Slide anterior" />
+            <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={!canGoNext} aria-label="Próximo slide" />
             <div className="story-hint" aria-hidden="true">
               Clique nas laterais para passar
             </div>
@@ -261,135 +236,31 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
   );
 }
 
-function EditableStoryPreview({ slide, layers, activeLayerId, onSelectLayer, onLayerMove, onPrev, onNext, slideIndex, total }) {
-  const dragRef = useRef(null);
-  const screenRef = useRef(null);
-  const backgroundUrl = assetUrl(slide?.renderedImageUrl || slide?.replacementImageUrl || slide?.sourceImageUrl);
-
-  function handlePointerDown(event, layer) {
-    event.preventDefault();
-    dragRef.current = {
-      id: layer.id,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: Number(layer.x || 540),
-      startY: Number(layer.y || 960),
-    };
-    onSelectLayer(layer.id);
-  }
-
-  function handlePointerMove(event) {
-    if (!dragRef.current || !screenRef.current) return;
-    const rect = screenRef.current.getBoundingClientRect();
-    const { deltaX, deltaY } = computeLayerDelta({
-      startClientX: dragRef.current.startClientX,
-      startClientY: dragRef.current.startClientY,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      previewWidth: rect.width,
-      previewHeight: rect.height,
-    });
-    onLayerMove(dragRef.current.id, {
-      x: Math.max(80, Math.min(1000, dragRef.current.startX + deltaX)),
-      y: Math.max(120, Math.min(1800, dragRef.current.startY + deltaY)),
-    });
-  }
-
-  function stopDrag() {
-    dragRef.current = null;
-  }
-
-  return (
-    <div className="editable-preview-shell">
-      <div className="download-title">
-        <p className="stage-label">Etapa 04</p>
-        <h2>Edite o slide final</h2>
-        <p>Toque no texto para selecionar. Arraste dentro do preview para reposicionar.</p>
-      </div>
-      <div className="phone-preview editor-phone-preview">
-        <div className="phone-preview__top">
-          <span>{slide ? `Slide ${slide.index}` : "Editor"}</span>
-          <span>{total ? `${slideIndex + 1}/${total}` : "0/0"}</span>
-        </div>
-        <div
-          className="phone-screen editor-screen"
-          ref={screenRef}
-          onPointerMove={handlePointerMove}
-          onPointerUp={stopDrag}
-          onPointerLeave={stopDrag}
-        >
-          {total > 1 && (
-            <div className="story-progress" aria-hidden="true">
-              {Array.from({ length: total }).map((_, index) => (
-                <span className={index <= slideIndex ? "active" : ""} key={index} />
-              ))}
-            </div>
-          )}
-          {backgroundUrl ? <img src={backgroundUrl} alt={`Preview editavel do slide ${slide?.index || ""}`} /> : <div className="empty-screen"><p>Envie uma imagem para editar.</p></div>}
-          <div className="editor-overlay">
-            {layers.map((layer, index) => (
-              <button
-                type="button"
-                key={layer.id || index}
-                className={`editor-layer ${activeLayerId === layer.id ? "active" : ""}`}
-                style={{
-                  left: `${(Number(layer.x || 540) / 1080) * 100}%`,
-                  top: `${(Number(layer.y || 960) / 1920) * 100}%`,
-                  width: `${(Number(layer.width || 900) / 1080) * 100}%`,
-                  minHeight: `${estimateLayerFrameHeight(layer)}%`,
-                  display: layer.hidden ? "none" : "block",
-                }}
-                onClick={() => onSelectLayer(layer.id)}
-                onPointerDown={(event) => handlePointerDown(event, layer)}
-              >
-                <span>{`Texto ${index + 1}`}</span>
-              </button>
-            ))}
-          </div>
-          {total > 1 && (
-            <>
-              <button className="story-tap-zone story-tap-zone--left" type="button" onClick={onPrev} disabled={slideIndex === 0} aria-label="Slide anterior">
-                <span>Anterior</span>
-              </button>
-              <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={slideIndex >= total - 1} aria-label="Proximo slide">
-                <span>Proximo</span>
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots }) {
+function ExtractStage({ url, setUrl, extracting, onExtract, onUploadScreenshots }) {
   const uploadRef = useRef(null);
 
   return (
-    <section className="stage-card extract-stage">
+    <section className="stage-card">
       <div className="stage-copy">
         <p className="stage-label">Etapa 01</p>
-        <h2>Cole o link do slideshow</h2>
-        <p>
-          Eu baixo os slides, leio o texto das imagens e preparo a revisão em português. Se o link travar, envie os
-          prints e siga o mesmo fluxo.
-        </p>
+        <h2>Extrair o post</h2>
+        <p>Cole o link do slideshow do TikTok ou envie prints. Eu organizo os slides, extraio o texto e separo a legenda.</p>
       </div>
 
-      <div className="extract-box">
+      <div className="extract-grid">
         <label className="input-group">
-          <span>Link do post</span>
-          <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.tiktok.com/@perfil/photo/..." />
+          <span>Link do slideshow</span>
+          <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.tiktok.com/@.../photo/..." />
         </label>
 
-        <div className="primary-actions">
-          <button className="action-button main-action" type="button" onClick={onExtract} disabled={extracting}>
-            {extracting ? <Loader2 className="spin" size={20} /> : <ScanText size={20} />}
+        <div className="extract-actions">
+          <button className="action-button main-action huge-action" type="button" onClick={onExtract} disabled={extracting}>
+            {extracting ? <Loader2 className="spin" size={18} /> : <ScanText size={18} />}
             Extrair post
           </button>
-          <button className="action-button ghost-action" type="button" onClick={() => uploadRef.current?.click()} disabled={extracting}>
-            <UploadCloud size={20} />
-            Usar prints dos slides
+          <button className="action-button ghost-action huge-action" type="button" onClick={() => uploadRef.current?.click()} disabled={extracting}>
+            <UploadCloud size={18} />
+            OCR via imagens
           </button>
           <input
             hidden
@@ -397,69 +268,56 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots 
             type="file"
             accept="image/*"
             multiple
-            onChange={(event) => onUploadScreenshots(event.target.files)}
+            onChange={(event) => {
+              onUploadScreenshots(event.target.files);
+              event.target.value = "";
+            }}
           />
         </div>
-      </div>
-
-      <div className="soft-note">
-        <Sparkles size={18} />
-        <span>O fluxo é local: extrai, revisa, troca as imagens, gera preview e baixa ZIP.</span>
       </div>
     </section>
   );
 }
 
 function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
-  if (loading) {
-    return (
-      <section className="project-shelf">
-        <div className="shelf-title">
-          <span>Projetos salvos</span>
-          <small>Carregando...</small>
-        </div>
-      </section>
-    );
-  }
-
-  if (!projects.length) {
-    return (
-      <section className="project-shelf empty-shelf">
-        <div className="shelf-title">
-          <span>Projetos salvos</span>
-          <small>Seus posts vão aparecer aqui automaticamente.</small>
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section className="project-shelf">
-      <div className="shelf-title">
-        <span>Projetos salvos</span>
-        <small>Continue de onde parou.</small>
+    <section className="stage-card">
+      <div className="stage-copy">
+        <p className="stage-label">Projetos</p>
+        <h2>Continue de onde parou</h2>
+        <p>Se você já começou um post antes, ele aparece aqui com a etapa atual salva.</p>
       </div>
-      <div className="project-grid">
-        {projects.map((project, index) => (
-          <article className="project-card" key={project.runId}>
-            <div>
-              <span>Post {index + 1}</span>
-              <strong>{projectTitle(project)}</strong>
-              <small>
-                {project.slideCount || 0} slides · {steps[stageIndex[stageByRun[project.stage] || project.stage] || 0]?.title || "Rascunho"}
-              </small>
-            </div>
-            <div className="project-actions">
-              <button className="action-button main-action" type="button" onClick={() => onOpenProject(project.runId)}>
-                Abrir
-              </button>
-              <button className="action-button danger-action" type="button" onClick={() => onDeleteProject(project.runId)}>
-                Excluir
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
+
+      {loading ? (
+        <div className="empty-publish">
+          <Loader2 className="spin" size={20} />
+          <p>Carregando seus projetos...</p>
+        </div>
+      ) : !projects.length ? (
+        <div className="empty-publish">
+          <p>Ainda não há projetos salvos.</p>
+        </div>
+      ) : (
+        <div className="account-grid">
+          {projects.map((project) => (
+            <article className="account-card selected" key={project.runId}>
+              <div>
+                <strong>{projectTitle(project)}</strong>
+                <small>{project.slideCount} slides · etapa {project.stage}</small>
+              </div>
+              <div className="download-actions">
+                <button className="action-button quiet-action" type="button" onClick={() => onOpenProject(project.runId)}>
+                  Abrir
+                </button>
+                <button className="action-button quiet-action" type="button" onClick={() => onDeleteProject(project.runId)}>
+                  <Trash2 size={16} />
+                  Excluir
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -526,11 +384,7 @@ function ReviewStage({
               {hasContent(captionPortuguese) && (
                 <label className="input-group">
                   <span>Descrição do TikTok</span>
-                  <textarea
-                    value={captionPortuguese}
-                    onChange={(event) => setCaptionPortuguese(event.target.value)}
-                    placeholder="Texto da descrição do post"
-                  />
+                  <textarea value={captionPortuguese} onChange={(event) => setCaptionPortuguese(event.target.value)} />
                 </label>
               )}
               {hasContent(hashtags) && (
@@ -541,17 +395,13 @@ function ReviewStage({
               )}
             </div>
           )}
-
-          <div className="editor-footer">
-            <span>{run.slides.length} slides carregados. Clique nas laterais da imagem para navegar sem rolar a página.</span>
-          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFile, onClearFiles, previews, onUpload, uploading }) {
+function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile, onMoveFile, onClearFiles, onUpload, uploading }) {
   const inputRef = useRef(null);
   const expected = run.slides.length;
   const ready = selectedFiles.length === expected;
@@ -573,10 +423,7 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
       <div className="stage-copy">
         <p className="stage-label">Etapa 03</p>
         <h2>Envie suas novas imagens</h2>
-        <p>
-          Pode escolher tudo de uma vez ou ir adicionando aos poucos. Eu mantenho a ordem e aceito imagens comuns do seu
-          PC, mesmo que não sejam 9:16.
-        </p>
+        <p>Você pode escolher tudo de uma vez ou ir completando aos poucos. Eu mantenho a ordem e preparo o slideshow final.</p>
       </div>
 
       <button
@@ -588,7 +435,7 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
       >
         <ImagePlus size={34} />
         <strong>{selectedFiles.length ? `${selectedFiles.length}/${expected} imagens na fila` : "Escolher ou arrastar imagens"}</strong>
-        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. Selecione só as que faltam que eu adiciono sem apagar as anteriores.`}</span>
+        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. Você pode adicionar só as que faltam.`}</span>
       </button>
       <input hidden ref={inputRef} type="file" accept="image/*" multiple onChange={handleFileInput} />
 
@@ -615,7 +462,7 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
                   <button type="button" onClick={() => onMoveFile(index, index + 1)} disabled={uploading || index === selectedFiles.length - 1}>
                     →
                   </button>
-                  <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading} aria-label={`Remover imagem ${index + 1}`}>
+                  <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading}>
                     Remover
                   </button>
                 </div>
@@ -635,369 +482,11 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
         ))}
       </div>
 
-      <div className="stage-footer">
-        <button className="action-button main-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
+      <div className="download-actions">
+        <button className="action-button main-action huge-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
           {uploading ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
-          Salvar imagens e gerar preview
+          Gerar slideshow final
         </button>
-      </div>
-    </section>
-  );
-}
-
-function EditStage({
-  run,
-  activeIndex,
-  setActiveIndex,
-  onContinue,
-  onApplyLayers,
-  applyingLayers,
-  onReplaceImage,
-  replacingImage,
-}) {
-  const slide = run.slides[activeIndex];
-  const caption = run.captionPortuguese || run.captionEnglish || "";
-  const hashtags = hashtagsToText(run.hashtags);
-  const [selectedLayerId, setSelectedLayerId] = useState("");
-  const [layersDraft, setLayersDraft] = useState([]);
-  const replaceInputRef = useRef(null);
-
-  useEffect(() => {
-    const incoming = Array.isArray(slide?.textLayers) && slide.textLayers.length ? slide.textLayers : [defaultTextLayer(slide)];
-    setLayersDraft(incoming.map((layer) => ({ ...layer })));
-    setSelectedLayerId(incoming[0]?.id || "");
-  }, [slide?.index, slide?.textLayers, slide?.reviewedEnglish, slide?.ocrEnglish]);
-
-  const selectedLayer =
-    layersDraft.find((layer) => layer.id === selectedLayerId) ||
-    layersDraft[0] ||
-    defaultTextLayer(slide);
-
-  function updateSelectedLayer(field, value) {
-    setLayersDraft((current) =>
-      current.map((layer) => (layer.id === selectedLayer.id ? { ...layer, [field]: value } : layer))
-    );
-  }
-
-  function addLayer() {
-    const id = `layer-${Date.now()}`;
-    const next = {
-      ...defaultTextLayer(slide),
-      id,
-      text: "Novo texto",
-      y: 960,
-      fontSize: 54,
-    };
-    setLayersDraft((current) => [...current, next]);
-    setSelectedLayerId(id);
-  }
-
-  function removeSelectedLayer() {
-    if (!selectedLayer) return;
-    setLayersDraft((current) => {
-      if (current.length <= 1) return current;
-      const filtered = current.filter((layer) => layer.id !== selectedLayer.id);
-      setSelectedLayerId(filtered[0]?.id || "");
-      return filtered;
-    });
-  }
-
-  function moveLayer(layerId, patch) {
-    setLayersDraft((current) => current.map((layer) => (layer.id === layerId ? { ...layer, ...patch } : layer)));
-  }
-
-  return (
-    <section className="stage-card edit-stage">
-      <div className="edit-workbench">
-        <div className="story-column">
-          <EditableStoryPreview
-            slide={slide}
-            layers={layersDraft}
-            activeLayerId={selectedLayer.id}
-            onSelectLayer={setSelectedLayerId}
-            onLayerMove={moveLayer}
-            slideIndex={activeIndex}
-            total={run.slides.length}
-            onPrev={() => setActiveIndex(Math.max(0, activeIndex - 1))}
-            onNext={() => setActiveIndex(Math.min(run.slides.length - 1, activeIndex + 1))}
-          />
-          <SlideRail rendered slides={run.slides} activeIndex={activeIndex} onSelect={setActiveIndex} />
-        </div>
-
-        <div className="edit-panel">
-          <article className="paint-panel">
-            <header>
-              <strong>Painel de edicao</strong>
-              <span>Troque o fundo, edite o texto e valide tudo antes de publicar.</span>
-            </header>
-            <div className="paint-layer-list">
-              {layersDraft.map((layer, index) => (
-                <button
-                  type="button"
-                  key={layer.id || index}
-                  className={`paint-layer-chip ${selectedLayer.id === layer.id ? "active" : ""}`}
-                  onClick={() => setSelectedLayerId(layer.id)}
-                >
-                  <Type size={14} />
-                  {layer.text?.slice(0, 24) || `Texto ${index + 1}`}
-                </button>
-              ))}
-            </div>
-            <div className="paint-actions">
-              <button type="button" className="action-button ghost-action" onClick={addLayer}>
-                + Adicionar texto
-              </button>
-              <button type="button" className="action-button ghost-action" onClick={() => replaceInputRef.current?.click()} disabled={replacingImage}>
-                {replacingImage ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                Trocar imagem do fundo
-              </button>
-              <button
-                type="button"
-                className="action-button quiet-action"
-                onClick={removeSelectedLayer}
-                disabled={layersDraft.length <= 1}
-              >
-                Remover texto
-              </button>
-            </div>
-            <input
-              hidden
-              ref={replaceInputRef}
-              type="file"
-              accept="image/*"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) onReplaceImage(slide.index, file);
-                event.target.value = "";
-              }}
-            />
-            <label className="input-group">
-              <span>Texto da camada selecionada</span>
-              <textarea
-                value={selectedLayer.text || ""}
-                onChange={(event) => updateSelectedLayer("text", event.target.value)}
-                placeholder="Digite o texto da camada..."
-              />
-            </label>
-            <div className="paint-grid">
-              <label className="input-group">
-                <span>Largura ({Math.round(Number(selectedLayer.width || 900))})</span>
-                <input
-                  type="range"
-                  min="320"
-                  max="980"
-                  value={Number(selectedLayer.width || 900)}
-                  onChange={(event) => updateSelectedLayer("width", Number(event.target.value))}
-                />
-              </label>
-              <label className="input-group">
-                <span>Posição X ({Math.round(Number(selectedLayer.x || 540))})</span>
-                <input
-                  type="range"
-                  min="80"
-                  max="1000"
-                  value={Number(selectedLayer.x || 540)}
-                  onChange={(event) => updateSelectedLayer("x", Number(event.target.value))}
-                />
-              </label>
-              <label className="input-group">
-                <span>Posição Y ({Math.round(Number(selectedLayer.y || 1520))})</span>
-                <input
-                  type="range"
-                  min="120"
-                  max="1800"
-                  value={Number(selectedLayer.y || 1520)}
-                  onChange={(event) => updateSelectedLayer("y", Number(event.target.value))}
-                />
-              </label>
-              <label className="input-group">
-                <span>Cor do texto</span>
-                <input type="color" value={selectedLayer.color || "#f8f3eb"} onChange={(event) => updateSelectedLayer("color", event.target.value)} />
-              </label>
-              <label className="input-group">
-                <span>Cor do contorno</span>
-                <input
-                  type="color"
-                  value={String(selectedLayer.strokeColor || "#050608").startsWith("#") ? selectedLayer.strokeColor : "#050608"}
-                  onChange={(event) => updateSelectedLayer("strokeColor", event.target.value)}
-                />
-              </label>
-            </div>
-            <div className="paint-actions">
-              <button
-                className="action-button main-action"
-                type="button"
-                onClick={() => onApplyLayers(slide.index, layersDraft)}
-                disabled={applyingLayers}
-              >
-                {applyingLayers ? <Loader2 className="spin" size={18} /> : <Palette size={18} />}
-                Atualizar preview
-              </button>
-              <button className="action-button main-action" type="button" onClick={onContinue}>
-                <Send size={18} />
-                Tudo certo, ir para publicar
-              </button>
-            </div>
-          </article>
-
-          <div className="download-actions">
-            <a className="action-button main-action" href={`${apiBase}/api/runs/${run.runId}/slides/${slide.index}/download`} target="_blank" rel="noreferrer">
-              <Download size={18} />
-              Baixar slide atual
-            </a>
-            <a className="action-button ghost-action" href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
-              <Download size={18} />
-              Baixar ZIP completo
-            </a>
-          </div>
-
-          {hasContent(caption) && (
-            <article className="script-card">
-              <span>Descrição</span>
-              <p>{caption}</p>
-              <button type="button" onClick={() => copyText(caption)}>
-                <Clipboard size={16} />
-                Copiar descrição
-              </button>
-            </article>
-          )}
-
-          {hasContent(hashtags) && (
-            <article className="script-card">
-              <span>Hashtags</span>
-              <p>{hashtags}</p>
-              <button type="button" onClick={() => copyText(hashtags)}>
-                <Clipboard size={16} />
-                Copiar hashtags
-              </button>
-            </article>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onConnectPostiz, onQueue, publishing, postizStatus }) {
-  const [selectedIds, setSelectedIds] = useState(() => new Set((run.destinations || []).map((destination) => destination.accountId)));
-  const [scheduledAt, setScheduledAt] = useState("");
-  const caption = [run.captionEnglish, hashtagsToText(run.hashtags)].filter(Boolean).join(" ").trim();
-
-  useEffect(() => {
-    setSelectedIds(new Set((run.destinations || []).map((destination) => destination.accountId)));
-  }, [run.runId]);
-
-  function toggleAccount(accountId) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(accountId)) next.delete(accountId);
-      else next.add(accountId);
-      return next;
-    });
-  }
-
-  const destinations = accounts
-    .filter((account) => selectedIds.has(account.id))
-    .map((account) => ({
-      accountId: account.id,
-      accountName: account.name,
-      accountHandle: account.handle,
-      scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
-    }));
-
-  return (
-    <section className="stage-card publish-stage">
-      <div className="publish-layout">
-        <div className="stage-copy">
-          <p className="stage-label">Etapa 05</p>
-          <h2>Enviar para o Postiz</h2>
-          <p>
-            Selecione as contas TikTok, defina um horário opcional e envie como rascunho seguro. Depois você finaliza no
-            app do TikTok.
-          </p>
-          <div className="safe-mode-card">
-            <CalendarClock size={22} />
-            <div>
-              <strong>Modo seguro ativado</strong>
-              <span>O app cria rascunho/upload no Postiz, não publicação direta automática.</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="publish-panel">
-          <div className="publish-panel__header">
-            <strong>Contas TikTok</strong>
-            <button className="action-button quiet-action" type="button" onClick={onRefreshAccounts} disabled={loadingAccounts}>
-              {loadingAccounts ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
-              Atualizar
-            </button>
-          </div>
-
-          {!accounts.length && (
-            <div className="empty-publish">
-              <p>
-                {postizStatus?.usingSelfHostedApiKey
-                  ? "O Postiz self-hosted ja esta configurado por API key. Se nenhuma conta aparecer, falta conectar o canal TikTok dentro do painel do seu Postiz ou configurar o app TikTok Developer no servidor."
-                  : "Nenhuma conta TikTok carregada. Conecte o Postiz uma vez e depois escolha as contas."}
-              </p>
-              {postizStatus?.canStartOAuth ? (
-                <button className="action-button main-action" type="button" onClick={onConnectPostiz}>
-                  <Send size={16} />
-                  Conectar Postiz
-                </button>
-              ) : null}
-            </div>
-          )}
-
-          <div className="account-grid">
-            {accounts.map((account) => (
-              <button
-                className={`account-card ${selectedIds.has(account.id) ? "selected" : ""}`}
-                key={account.id}
-                type="button"
-                onClick={() => toggleAccount(account.id)}
-              >
-                {account.picture ? <img src={account.picture} alt="" /> : <span>{(account.name || "T").slice(0, 1)}</span>}
-                <div>
-                  <strong>{account.name || "TikTok"}</strong>
-                  <small>{account.handle ? `@${account.handle}` : account.id}</small>
-                </div>
-                <Check size={18} />
-              </button>
-            ))}
-          </div>
-
-          <label className="input-group">
-            <span>Horário opcional</span>
-            <input type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
-          </label>
-
-          <article className="script-card compact-script">
-            <span>Legenda final em inglês</span>
-            <p>{caption || "Sem legenda detectada."}</p>
-          </article>
-
-          {!!run.destinations?.length && (
-            <div className="destination-status-list">
-              {run.destinations.map((destination) => (
-                <div key={destination.accountId}>
-                  <strong>{destination.accountName || destination.accountHandle || destination.accountId}</strong>
-                  <span>{destination.status === "waiting_manual_publish" ? "Rascunho enviado" : destination.status}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            className="action-button main-action huge-action"
-            type="button"
-            onClick={() => onQueue(destinations)}
-            disabled={publishing || !destinations.length}
-          >
-            {publishing ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-            Enviar rascunho para {destinations.length || 0} conta(s)
-          </button>
-        </div>
       </div>
     </section>
   );
@@ -1005,6 +494,8 @@ function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onCon
 
 function PreviewStage({ run, activeIndex, setActiveIndex, onContinue }) {
   const slide = run.slides[activeIndex];
+  const caption = run.captionEnglish || "";
+  const hashtags = hashtagsToText(run.hashtags);
 
   return (
     <section className="stage-card review-stage">
@@ -1024,21 +515,144 @@ function PreviewStage({ run, activeIndex, setActiveIndex, onContinue }) {
         <div className="editor-panel review-editor-panel">
           <article className="script-card">
             <span>Preview validado</span>
-            <p>Confira os slides e, quando estiver tudo certo, siga para envio no Postiz.</p>
+            <p>Se os slides estiverem bons, siga para escolher a pasta do Google Drive.</p>
           </article>
+
           <div className="download-actions">
             <a className="action-button main-action" href={`${apiBase}/api/runs/${run.runId}/slides/${slide.index}/download`} target="_blank" rel="noreferrer">
               <Download size={18} />
               Baixar slide atual
             </a>
-            <a className="action-button ghost-action" href={`${apiBase}/api/runs/${run.runId}/export.zip`} target="_blank" rel="noreferrer">
-              <Download size={18} />
-              Baixar ZIP completo
-            </a>
           </div>
+
+          {hasContent(caption) && (
+            <article className="script-card">
+              <span>Descrição final</span>
+              <p>{caption}</p>
+              <button type="button" onClick={() => navigator.clipboard.writeText(caption)}>
+                <Clipboard size={16} />
+                Copiar descrição
+              </button>
+            </article>
+          )}
+
+          {hasContent(hashtags) && (
+            <article className="script-card">
+              <span>Hashtags</span>
+              <p>{hashtags}</p>
+              <button type="button" onClick={() => navigator.clipboard.writeText(hashtags)}>
+                <Clipboard size={16} />
+                Copiar hashtags
+              </button>
+            </article>
+          )}
+
           <button className="action-button main-action huge-action" type="button" onClick={onContinue}>
             <ArrowRight size={18} />
-            Ir para publicar no Postiz
+            Ir para o Google Drive
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DriveStage({
+  run,
+  driveFolders,
+  loadingFolders,
+  driveConnected,
+  exportingDrive,
+  onConnectDrive,
+  onRefreshFolders,
+  onSelectFolder,
+  onSendToDrive,
+}) {
+  const caption = [run.captionEnglish, hashtagsToText(run.hashtags)].filter(Boolean).join(" ").trim();
+  const selectedFolderId = run.driveTarget?.folderId || "";
+
+  return (
+    <section className="stage-card publish-stage">
+      <div className="publish-layout">
+        <div className="stage-copy">
+          <p className="stage-label">Etapa 05</p>
+          <h2>Enviar para o Google Drive</h2>
+          <p>Escolha a pasta do perfil. Eu crio automaticamente uma subpasta como post 1, post 2, post 3 e envio tudo para lá.</p>
+          {run.driveExport ? (
+            <article className="script-card compact-script">
+              <span>Último envio</span>
+              <p>
+                {run.driveExport.profileFolderName} / {run.driveExport.postFolderName}
+              </p>
+              <a href={run.driveExport.postFolderUrl} target="_blank" rel="noreferrer">
+                Abrir pasta no Drive
+              </a>
+            </article>
+          ) : (
+            <article className="script-card compact-script">
+              <span>Como vai sair</span>
+              <p>Dentro da pasta escolhida eu envio os slides renderizados, a legenda, as hashtags e um arquivo post.json.</p>
+            </article>
+          )}
+        </div>
+
+        <div className="publish-panel">
+          <div className="publish-panel__header">
+            <strong>Pastas de perfil</strong>
+            <button className="action-button quiet-action" type="button" onClick={onRefreshFolders} disabled={loadingFolders || !driveConnected}>
+              {loadingFolders ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
+              Atualizar
+            </button>
+          </div>
+
+          {!googleClientId ? (
+            <div className="empty-publish">
+              <p>Falta configurar `VITE_GOOGLE_CLIENT_ID` para liberar a conexão com o Google Drive.</p>
+            </div>
+          ) : !driveConnected ? (
+            <div className="empty-publish">
+              <p>Conecte seu Google Drive uma vez. Depois a tela passa a listar automaticamente as pastas reais da sua conta.</p>
+              <button className="action-button main-action" type="button" onClick={onConnectDrive}>
+                <Send size={16} />
+                Conectar Google Drive
+              </button>
+            </div>
+          ) : null}
+
+          {!!driveFolders.length && (
+            <div className="account-grid">
+              {driveFolders.map((folder) => (
+                <button
+                  className={`account-card ${selectedFolderId === folder.id ? "selected" : ""}`}
+                  key={folder.id}
+                  type="button"
+                  onClick={() => onSelectFolder(folder)}
+                >
+                  <span>{(folder.name || "P").slice(0, 1)}</span>
+                  <div>
+                    <strong>{folder.name}</strong>
+                    <small>{selectedFolderId === folder.id ? "Selecionada para este post" : "Pasta detectada na raiz do Drive"}</small>
+                  </div>
+                  <Check size={18} />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {driveConnected && !driveFolders.length && !loadingFolders ? (
+            <div className="empty-publish">
+              <p>Nenhuma pasta foi encontrada na raiz do seu Drive. Crie as pastas dos perfis e clique em atualizar.</p>
+            </div>
+          ) : null}
+
+          <article className="script-card compact-script">
+            <span>Legenda final em inglês</span>
+            <p>{caption || "Sem legenda detectada."}</p>
+          </article>
+
+          <button className="action-button main-action huge-action" type="button" onClick={onSendToDrive} disabled={exportingDrive || !selectedFolderId}>
+            {exportingDrive ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+            Enviar arquivos para a pasta selecionada
           </button>
         </div>
       </div>
@@ -1061,10 +675,10 @@ export function App() {
   const [extracting, setExtracting] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
-  const [accounts, setAccounts] = useState([]);
-  const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [publishing, setPublishing] = useState(false);
-  const [postizStatus, setPostizStatus] = useState({ mode: "unconfigured", canStartOAuth: false, usingSelfHostedApiKey: false });
+  const [driveSession, setDriveSession] = useState(() => restoreDriveSession(driveSessionStorageKey));
+  const [driveFolders, setDriveFolders] = useState([]);
+  const [loadingDriveFolders, setLoadingDriveFolders] = useState(false);
+  const [exportingDrive, setExportingDrive] = useState(false);
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [selectedStage, setSelectedStage] = useState("extract");
@@ -1102,18 +716,20 @@ export function App() {
         openProject(route.runId, { silent: true, syncRoute: false });
         return;
       }
-
-      clearActiveProject();
-      setError("");
-      setStatus("Escolha um projeto salvo ou crie um novo.");
+      goHome({ replace: true, statusMessage: "Você voltou para a lista de projetos." });
     }
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [run?.runId]);
 
   useEffect(() => {
-    if (!run?.runId) return;
+    if (!run?.runId) {
+      localStorage.removeItem(draftStorageKey);
+      localStorage.removeItem(currentRunStorageKey);
+      return;
+    }
+
     localStorage.setItem(currentRunStorageKey, run.runId);
     localStorage.setItem(
       draftStorageKey,
@@ -1131,42 +747,10 @@ export function App() {
   }, [run?.runId, draftSlides, draftCaptionEnglish, draftCaptionPortuguese, draftHashtags, currentReviewIndex, previewIndex]);
 
   useEffect(() => {
-    if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
-      loadPostizStatus();
-      loadPostizAccounts();
+    if (activeStage === "publish" && driveSession?.accessToken) {
+      refreshDriveFolders({ silent: true });
     }
-  }, [activeStage]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const state = params.get("state");
-    const oauthError = params.get("error");
-    if (window.location.pathname !== "/callback" || (!code && !oauthError)) return;
-
-    async function finishPostizOAuth() {
-      setStatus("Conectando Postiz...");
-      setError("");
-      try {
-        const response = await fetch(`${apiBase}/api/postiz/oauth/callback`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, state, error: oauthError }),
-        });
-        const data = await readJsonResponse(response, "Não consegui conectar o Postiz.");
-        if (!response.ok) throw new Error(data.error || "Não consegui conectar o Postiz.");
-        setAccounts(data.accounts || []);
-        setStatus(data.warning || "Postiz conectado. Volte para a etapa Publicar.");
-        const runId = localStorage.getItem(currentRunStorageKey);
-        window.history.replaceState({}, "", buildProjectRoute(runId));
-      } catch (requestError) {
-        setError(requestError.message);
-        setStatus("Postiz não conectado.");
-      }
-    }
-
-    finishPostizOAuth();
-  }, []);
+  }, [activeStage, driveSession?.accessToken]);
 
   function syncProjectRoute(runId, { replace = false } = {}) {
     const nextUrl = buildProjectRoute(runId);
@@ -1174,26 +758,6 @@ export function App() {
     if (nextUrl === currentUrl) return;
     const method = replace ? "replaceState" : "pushState";
     window.history[method]({}, "", nextUrl);
-  }
-
-  function clearActiveProject() {
-    setRun(null);
-    setDraftSlides([]);
-    setDraftCaptionEnglish("");
-    setDraftCaptionPortuguese("");
-    setDraftHashtags("");
-    setCurrentReviewIndex(0);
-    setPreviewIndex(0);
-    setReplacementFiles([]);
-    setSelectedStage("extract");
-  }
-
-  function goHome({ replace = false, statusMessage = "Escolha um projeto salvo ou crie um novo." } = {}) {
-    clearActiveProject();
-    const method = replace ? "replaceState" : "pushState";
-    window.history[method]({}, "", "/");
-    setError("");
-    setStatus(statusMessage);
   }
 
   function hydrateRun(nextRun, options = {}) {
@@ -1225,6 +789,27 @@ export function App() {
     setDraftHashtags(savedDraft.draftHashtags || "");
     setCurrentReviewIndex(Number(savedDraft.currentReviewIndex || 0));
     setPreviewIndex(Number(savedDraft.previewIndex || 0));
+  }
+
+  function clearActiveProject() {
+    setRun(null);
+    setDraftSlides([]);
+    setDraftCaptionEnglish("");
+    setDraftCaptionPortuguese("");
+    setDraftHashtags("");
+    setCurrentReviewIndex(0);
+    setPreviewIndex(0);
+    setReplacementFiles([]);
+    setSelectedStage("extract");
+  }
+
+  function goHome({ replace = false, statusMessage = "Escolha um projeto salvo ou crie um novo." } = {}) {
+    clearActiveProject();
+    window.history[replace ? "replaceState" : "pushState"]({}, "", "/");
+    localStorage.removeItem(currentRunStorageKey);
+    setError("");
+    setStatus(statusMessage);
+    loadProjects();
   }
 
   async function loadProjects() {
@@ -1272,9 +857,10 @@ export function App() {
         localStorage.removeItem(currentRunStorageKey);
         localStorage.removeItem(draftStorageKey);
         goHome({ replace: true, statusMessage: "Projeto excluído." });
+      } else {
+        await loadProjects();
+        setStatus("Projeto excluído.");
       }
-      setProjects((items) => items.filter((project) => project.runId !== runId));
-      if (run?.runId !== runId) setStatus("Projeto excluído.");
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -1283,7 +869,7 @@ export function App() {
   async function extractPost() {
     setError("");
     setExtracting(true);
-    setStatus("Extraindo slides e lendo o texto...");
+    setStatus("Extraindo slides, OCR e legenda do post...");
 
     try {
       const response = await fetch(`${apiBase}/api/extract`, {
@@ -1291,7 +877,7 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
-      const data = await readJsonResponse(response, "Não consegui carregar as contas do Postiz.");
+      const data = await readJsonResponse(response, "Não consegui extrair esse post.");
       if (!response.ok) throw new Error(data.error || "Não consegui extrair esse post.");
       hydrateRun(data);
       setStatus(`${data.slides.length} slides prontos para revisar.`);
@@ -1310,13 +896,13 @@ export function App() {
 
     setError("");
     setExtracting(true);
-    setStatus("Lendo os prints enviados...");
+    setStatus("Lendo os prints para OCR...");
 
     try {
       const formData = new FormData();
       selected.forEach((file) => formData.append("slides", file));
       const response = await fetch(`${apiBase}/api/ocr-upload`, { method: "POST", body: formData });
-      const data = await readJsonResponse(response, "Não consegui iniciar a conexão com Postiz.");
+      const data = await readJsonResponse(response, "Não consegui ler esses prints.");
       if (!response.ok) throw new Error(data.error || "Não consegui ler esses prints.");
       hydrateRun(data);
       setStatus(`${data.slides.length} slides prontos para revisar.`);
@@ -1376,7 +962,7 @@ export function App() {
         }),
       });
 
-      const data = await readJsonResponse(response, "Não consegui enviar ao Postiz.");
+      const data = await readJsonResponse(response, "Não consegui salvar a revisão.");
       if (!response.ok) throw new Error(data.error || "Não consegui salvar a revisão.");
       hydrateRun(data, { stage: "images", replaceRoute: true });
       setStatus("Revisão salva. Agora envie suas imagens.");
@@ -1448,14 +1034,16 @@ export function App() {
         method: "POST",
         body: formData,
       });
-      const data = await readJsonResponse(response, "Nao consegui enviar as imagens.");
+      const data = await readJsonResponse(response, "Não consegui enviar as imagens.");
       if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
+
       setStatus("Imagens salvas. Gerando slideshow final...");
       const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const renderData = await readJsonResponse(renderResponse, "Nao consegui gerar o preview final.");
-      if (!renderResponse.ok) throw new Error(renderData.error || "Nao consegui gerar o preview final.");
+      const renderData = await readJsonResponse(renderResponse, "Não consegui gerar o preview final.");
+      if (!renderResponse.ok) throw new Error(renderData.error || "Não consegui gerar o preview final.");
+
       hydrateRun(renderData, { stage: "preview", replaceRoute: true });
-      setStatus("Preview pronto. Agora siga para publicar.");
+      setStatus("Preview pronto. Agora escolha a pasta do Drive.");
       loadProjects();
     } catch (requestError) {
       setError(requestError.message);
@@ -1464,100 +1052,200 @@ export function App() {
       setUploadingImages(false);
     }
   }
-  async function loadPostizAccounts() {
-    setLoadingAccounts(true);
-    setError("");
+
+  async function refreshDriveFolders({ silent = false } = {}) {
+    if (!driveSession?.accessToken) {
+      setDriveFolders([]);
+      return [];
+    }
+
+    setLoadingDriveFolders(true);
+    if (!silent) {
+      setError("");
+      setStatus("Lendo suas pastas do Google Drive...");
+    }
+
     try {
-      const response = await fetch(`${apiBase}/api/postiz/accounts`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui carregar as contas do Postiz.");
-      setAccounts(data.accounts || []);
-      setStatus(
-        data.warning ||
-          (data.accounts?.length ? `${data.accounts.length} conta(s) TikTok carregada(s).` : "Nenhuma conta TikTok encontrada no Postiz.")
-      );
+      const folders = await listRootFolders(driveSession.accessToken);
+      setDriveFolders(folders);
+
+      if (run?.driveTarget?.folderId) {
+        const updatedFolder = folders.find((folder) => folder.id === run.driveTarget.folderId);
+        if (updatedFolder && updatedFolder.name !== run.driveTarget.folderName) {
+          await persistSelectedDriveFolder(updatedFolder, { silent: true });
+        }
+      }
+
+      if (!silent) {
+        setStatus(folders.length ? `${folders.length} pasta(s) encontrada(s) no Drive.` : "Nenhuma pasta encontrada na raiz do Drive.");
+      }
+      return folders;
+    } catch (requestError) {
+      setDriveFolders([]);
+      if (!silent) {
+        setError(requestError.message);
+        setStatus("Não consegui carregar suas pastas do Drive.");
+      }
+      return [];
+    } finally {
+      setLoadingDriveFolders(false);
+    }
+  }
+
+  async function connectDrive() {
+    setError("");
+    setStatus("Conectando o Google Drive...");
+
+    try {
+      const session = await requestDriveAccess(googleClientId, driveSession);
+      persistDriveSession(driveSessionStorageKey, session);
+      setDriveSession(session);
+      setStatus("Google Drive conectado. Vou buscar suas pastas agora.");
+      await refreshDriveFolders({ silent: true });
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Postiz ainda não conectado.");
-    } finally {
-      setLoadingAccounts(false);
+      setStatus("Conexão com o Google Drive não concluída.");
     }
   }
 
-  async function loadPostizStatus() {
+  async function persistSelectedDriveFolder(folder, { silent = false } = {}) {
+    if (!run || !folder?.id) return;
+
     try {
-      const response = await fetch(`${apiBase}/api/postiz/status`);
-      const data = await readJsonResponse(response, "Nao consegui ler o status do Postiz.");
-      if (!response.ok) throw new Error(data.error || "Nao consegui ler o status do Postiz.");
-      setPostizStatus(data);
+      const response = await fetch(`${apiBase}/api/runs/${run.runId}/drive-target`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          folderId: folder.id,
+          folderName: folder.name,
+        }),
+      });
+      const data = await readJsonResponse(response, "Não consegui salvar a pasta do Drive.");
+      if (!response.ok) throw new Error(data.error || "Não consegui salvar a pasta do Drive.");
+      hydrateRun(data, { stage: "publish", replaceRoute: true });
+      if (!silent) {
+        setStatus(`Pasta "${folder.name}" selecionada.`);
+      }
     } catch (requestError) {
-      console.warn("[postiz] status failed", requestError);
+      setError(requestError.message);
+      if (!silent) {
+        setStatus("Não consegui salvar a pasta do Drive.");
+      }
     }
   }
 
-  async function connectPostiz() {
-    if (postizStatus?.usingSelfHostedApiKey) {
-      setStatus("Postiz self-hosted ja esta ligado por API key. Vou apenas recarregar as contas.");
-      await loadPostizAccounts();
+  async function sendToDrive() {
+    if (!run?.driveTarget?.folderId) {
+      setError("Escolha uma pasta do Drive antes de enviar.");
       return;
     }
-    setError("");
-    setStatus("Abrindo autorização do Postiz...");
-    try {
-      const response = await fetch(`${apiBase}/api/postiz/oauth/start`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui iniciar a conexão com Postiz.");
-      window.location.href = data.authorizeUrl;
-    } catch (requestError) {
-      setError(requestError.message);
-      setStatus("Conexão com Postiz não iniciada.");
+    if (!driveSession?.accessToken) {
+      setError("Conecte o Google Drive antes de enviar.");
+      return;
     }
-  }
 
-  async function queuePostizDraft(destinations) {
-    if (!run) return;
-    setPublishing(true);
+    setExportingDrive(true);
     setError("");
-    setStatus("Enviando rascunho para o Postiz...");
+    setStatus("Criando a pasta do post no Google Drive...");
 
     try {
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/postiz/queue`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ destinations }),
+      const profileFolder = driveFolders.find((folder) => folder.id === run.driveTarget.folderId) || run.driveTarget;
+      const childFolders = await listChildFolders(driveSession.accessToken, run.driveTarget.folderId);
+      const postFolderName = nextPostFolderName(childFolders);
+      const postFolder = await createDriveFolder(driveSession.accessToken, postFolderName, run.driveTarget.folderId);
+
+      const uploadedFiles = [];
+      for (const slide of run.slides) {
+        const slideName = slide.renderedImageUrl?.split("/").pop() || `slide-${String(slide.index).padStart(2, "0")}.jpg`;
+        setStatus(`Enviando ${slideName} para o Drive...`);
+        const slideResponse = await fetch(assetUrl(slide.renderedImageUrl));
+        if (!slideResponse.ok) throw new Error(`Não consegui baixar ${slideName} do servidor.`);
+        const slideBlob = await slideResponse.blob();
+        const uploaded = await uploadBlobFile(driveSession.accessToken, {
+          parentId: postFolder.id,
+          name: slideName,
+          blob: slideBlob,
+          mimeType: slideBlob.type || "image/jpeg",
+        });
+        uploadedFiles.push(uploaded);
+      }
+
+      setStatus("Enviando legenda e hashtags para o Drive...");
+      const captionFile = await uploadTextFile(driveSession.accessToken, {
+        parentId: postFolder.id,
+        name: "caption.txt",
+        content: run.captionEnglish || "",
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui enviar ao Postiz.");
-      hydrateRun(data.run, { stage: "publish", replaceRoute: true });
-      setStatus("Rascunho enviado. Confira no Postiz/TikTok antes de publicar.");
+      const hashtagsFile = await uploadTextFile(driveSession.accessToken, {
+        parentId: postFolder.id,
+        name: "hashtags.txt",
+        content: hashtagsToText(run.hashtags),
+      });
+      const manifestFile = await uploadTextFile(driveSession.accessToken, {
+        parentId: postFolder.id,
+        name: "post.json",
+        content: JSON.stringify(
+          {
+            runId: run.runId,
+            sourceUrl: run.sourceUrl,
+            captionEnglish: run.captionEnglish,
+            captionPortuguese: run.captionPortuguese,
+            hashtags: run.hashtags,
+            slides: run.slides.map((slide) => ({
+              index: slide.index,
+              reviewedEnglish: slide.reviewedEnglish,
+              reviewedPortuguese: slide.reviewedPortuguese,
+              renderedImageUrl: slide.renderedImageUrl,
+            })),
+          },
+          null,
+          2
+        ),
+      });
+
+      const response = await fetch(`${apiBase}/api/runs/${run.runId}/drive-export`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileFolderId: run.driveTarget.folderId,
+          profileFolderName: profileFolder.name,
+          postFolderId: postFolder.id,
+          postFolderName,
+          postFolderUrl: postFolder.webViewLink || `https://drive.google.com/drive/folders/${postFolder.id}`,
+          files: [...uploadedFiles, captionFile, hashtagsFile, manifestFile],
+        }),
+      });
+      const data = await readJsonResponse(response, "Não consegui salvar o envio do Drive.");
+      if (!response.ok) throw new Error(data.error || "Não consegui salvar o envio do Drive.");
+
+      hydrateRun(data, { stage: "publish", replaceRoute: true });
+      setStatus(`Arquivos enviados para ${profileFolder.name} / ${postFolderName}.`);
       loadProjects();
     } catch (requestError) {
+      const message = String(requestError.message || "");
+      if (/token|unauthorized|permission|login|expired/i.test(message)) {
+        clearDriveSession(driveSessionStorageKey);
+        setDriveSession(null);
+      }
       setError(requestError.message);
-      setStatus("Envio ao Postiz não concluído.");
+      setStatus("Envio para o Google Drive não concluído.");
     } finally {
-      setPublishing(false);
+      setExportingDrive(false);
     }
   }
 
   function selectStage(stepKey) {
-    if (!run) {
-      goHome();
-      return;
-    }
-
+    if (!run) return;
     if (stepKey === "extract") {
       goHome();
       return;
     }
-
     if (!unlockedStages.includes(stepKey)) return;
     setSelectedStage(stepKey);
     setError("");
     setStatus(`Etapa ${steps[stageIndex[stepKey]]?.title || stepKey} aberta.`);
-
-    if (stepKey === "publish" && !accounts.length && !loadingAccounts) {
-      loadPostizStatus();
-      loadPostizAccounts();
+    if (stepKey === "publish" && driveSession?.accessToken) {
+      refreshDriveFolders({ silent: true });
     }
   }
 
@@ -1614,11 +1302,11 @@ export function App() {
           <ImageStage
             run={run}
             selectedFiles={replacementFiles}
+            previews={replacementPreviews}
             onSelectFiles={selectReplacementFiles}
             onRemoveFile={removeReplacementFile}
             onMoveFile={moveReplacementImage}
             onClearFiles={clearReplacementFiles}
-            previews={replacementPreviews}
             onUpload={uploadReplacementImages}
             uploading={uploadingImages}
           />
@@ -1632,27 +1320,30 @@ export function App() {
             onContinue={() => {
               setRun({ ...run, stage: "publish" });
               setSelectedStage("publish");
-              loadPostizAccounts();
+              if (driveSession?.accessToken) {
+                refreshDriveFolders({ silent: true });
+              }
             }}
           />
         )}
 
         {activeStage === "publish" && run && (
-          <PublishStage
+          <DriveStage
             run={run}
-            accounts={accounts}
-            loadingAccounts={loadingAccounts}
-            onRefreshAccounts={loadPostizAccounts}
-            onConnectPostiz={connectPostiz}
-            onQueue={queuePostizDraft}
-            publishing={publishing}
-            postizStatus={postizStatus}
+            driveFolders={driveFolders}
+            loadingFolders={loadingDriveFolders}
+            driveConnected={Boolean(driveSession?.accessToken)}
+            exportingDrive={exportingDrive}
+            onConnectDrive={connectDrive}
+            onRefreshFolders={() => refreshDriveFolders()}
+            onSelectFolder={persistSelectedDriveFolder}
+            onSendToDrive={sendToDrive}
           />
         )}
 
-        {(extracting || savingReview || uploadingImages || publishing) && (
+        {(extracting || savingReview || uploadingImages || exportingDrive) && (
           <div className="work-overlay">
-            <LoadingIcon active />
+            <LoadingInline active />
             <span>{status}</span>
           </div>
         )}
@@ -1660,10 +1351,3 @@ export function App() {
     </main>
   );
 }
-
-
-
-
-
-
-

@@ -28,7 +28,6 @@ describe("app flow", () => {
 
     app = createApp({
       rootDir,
-      publishStoreConfig: { disableSupabase: true },
       services: {
         captureSlidesViaSnapTik: async (_url, slidesDir) => {
           await fs.mkdir(slidesDir, { recursive: true });
@@ -75,23 +74,12 @@ describe("app flow", () => {
           caption: "This changed my routine",
           hashtags: ["#fitness", "#habits"],
         }),
-        translateTexts: async ({ texts, from, to }) =>
-          texts.map((text) => `[${from}->${to}] ${text}`),
-        postiz: {
-          listTikTokAccounts: async () => [
-            { id: "tt-1", provider: "tiktok", name: "Account One", handle: "one", picture: "", disabled: false },
-            { id: "tt-2", provider: "tiktok", name: "Account Two", handle: "two", picture: "", disabled: false },
-          ],
-          createTikTokDraft: async ({ accountId }) => ({
-            uploads: [{ id: "media-1", path: "https://cdn.test/slide.jpg" }],
-            posts: [{ postId: `post-${accountId}`, integration: accountId }],
-          }),
-        },
+        translateTexts: async ({ texts, from, to }) => texts.map((text) => `[${from}->${to}] ${text}`),
       },
     });
   });
 
-  it("extracts, saves review, renders and exports zip", async () => {
+  it("extracts, saves review, renders and persists Drive delivery metadata", async () => {
     const extract = await request(app)
       .post("/api/extract")
       .send({ url: "https://www.tiktok.com/@foo/photo/1234567890123456789" })
@@ -127,65 +115,51 @@ describe("app flow", () => {
       .expect(200);
 
     expect(upload.body.stage).toBe("render");
-    expect(upload.body.slides[0].replacementImageUrl).toContain("/uploads/");
 
     const render = await request(app).post(`/api/runs/${runId}/render`).expect(200);
     expect(render.body.stage).toBe("preview");
     expect(render.body.slides[0].renderedImageUrl).toContain("/rendered/");
     expect(render.body.slides[0].textLayers?.length).toBeGreaterThan(0);
 
-    const layerSave = await request(app)
-      .put(`/api/runs/${runId}/slides/1/layers`)
+    const driveTarget = await request(app)
+      .put(`/api/runs/${runId}/drive-target`)
       .send({
-        layers: [
-          {
-            id: "main",
-            text: "Edited layer text",
-            x: 520,
-            y: 1500,
-            width: 820,
-            fontSize: 58,
-            align: "center",
-          },
-        ],
+        folderId: "perfil-2-id",
+        folderName: "perfil 2",
       })
       .expect(200);
-    expect(layerSave.body.slides[0].textLayers[0].text).toBe("Edited layer text");
 
-    const reRender = await request(app).post(`/api/runs/${runId}/render`).expect(200);
-    expect(reRender.body.slides[0].textLayers[0].text).toBe("Edited layer text");
+    expect(driveTarget.body.stage).toBe("publish");
+    expect(driveTarget.body.driveTarget).toMatchObject({
+      folderId: "perfil-2-id",
+      folderName: "perfil 2",
+    });
 
-    const replaceOne = await request(app)
-      .post(`/api/runs/${runId}/slides/1/replacement`)
-      .attach("image", await makeImage("#884422"), "single.jpg")
-      .expect(200);
-    expect(replaceOne.body.slides[0].replacementImageUrl).toContain("/uploads/");
-
-    const zip = await request(app).get(`/api/runs/${runId}/export.zip`).expect(200);
-    expect(zip.headers["content-type"]).toContain("application/zip");
-    expect(Number(zip.headers["content-length"] || 0)).toBeGreaterThan(2000);
-
-    const accounts = await request(app).get("/api/postiz/accounts").expect(200);
-    expect(accounts.body.accounts).toHaveLength(2);
-
-    const queue = await request(app)
-      .post(`/api/runs/${runId}/postiz/queue`)
+    const driveExport = await request(app)
+      .put(`/api/runs/${runId}/drive-export`)
       .send({
-        destinations: [
-          { accountId: "tt-1", accountName: "Account One", accountHandle: "one" },
-          { accountId: "tt-2", accountName: "Account Two", accountHandle: "two" },
+        profileFolderId: "perfil-2-id",
+        profileFolderName: "perfil 2",
+        postFolderId: "post-folder-id",
+        postFolderName: "post 1",
+        postFolderUrl: "https://drive.google.com/drive/folders/post-folder-id",
+        files: [
+          { id: "file-1", name: "slide-01.jpg", mimeType: "image/jpeg", webViewLink: "https://drive.google.com/file/d/file-1/view" },
+          { id: "file-2", name: "caption.txt", mimeType: "text/plain", webViewLink: "https://drive.google.com/file/d/file-2/view" },
         ],
       })
       .expect(200);
 
-    expect(queue.body.run.stage).toBe("publish");
-    expect(queue.body.destinations.map((destination) => destination.status)).toEqual([
-      "waiting_manual_publish",
-      "waiting_manual_publish",
-    ]);
+    expect(driveExport.body.driveExport).toMatchObject({
+      profileFolderId: "perfil-2-id",
+      postFolderId: "post-folder-id",
+      postFolderName: "post 1",
+    });
+    expect(driveExport.body.driveExport.files).toHaveLength(2);
 
-    const history = await request(app).get("/api/history").expect(200);
-    expect(history.body.items[0].destinations).toHaveLength(2);
+    const reopened = await request(app).get(`/api/runs/${runId}`).expect(200);
+    expect(reopened.body.driveTarget.folderName).toBe("perfil 2");
+    expect(reopened.body.driveExport.postFolderName).toBe("post 1");
 
     const projects = await request(app).get("/api/projects").expect(200);
     expect(projects.body.items[0]).toMatchObject({
@@ -196,23 +170,5 @@ describe("app flow", () => {
 
     await request(app).delete(`/api/runs/${runId}`).expect(200);
     await request(app).get(`/api/runs/${runId}`).expect(404);
-  });
-
-  it("returns a warning when Postiz is connected but has no active API subscription", async () => {
-    const warningApp = createApp({
-      rootDir,
-      publishStoreConfig: { disableSupabase: true },
-      services: {
-        postiz: {
-          listTikTokAccounts: async () => {
-            throw new Error("O Postiz autorizou a conta, mas a API respondeu que nao existe uma assinatura ativa para esse workspace.");
-          },
-        },
-      },
-    });
-
-    const response = await request(warningApp).get("/api/postiz/accounts").expect(200);
-    expect(response.body.accounts).toEqual([]);
-    expect(response.body.warning).toMatch(/assinatura ativa/i);
   });
 });

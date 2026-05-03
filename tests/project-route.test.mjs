@@ -17,9 +17,6 @@ describe("project routes", () => {
     expect(parseProjectRoute("/qualquer-coisa")).toEqual({ view: "home" });
   });
 
-  it("keeps callback routes untouched", () => {
-    expect(parseProjectRoute("/callback")).toEqual({ view: "callback" });
-  });
 });
 
 describe("unlocked stages", () => {
