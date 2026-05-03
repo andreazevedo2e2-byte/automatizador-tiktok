@@ -213,16 +213,15 @@ function LoginScreen({ email, password, setEmail, setPassword, loading, onSubmit
       <section className="studio auth-studio">
         <header className="studio-header">
           <div>
-            <p className="kicker">Acesso privado</p>
-            <h1>Entrar no Automatizador TikTok</h1>
+            <p className="kicker">Login</p>
+            <h1>Entrar</h1>
           </div>
         </header>
 
         <section className="stage-card auth-card">
           <div className="stage-copy">
-            <p className="stage-label">Login</p>
-            <h2>Seus projetos ficam ligados Ã  sua conta</h2>
-            <p>Entre uma vez para continuar do ponto em que parou em qualquer acesso do site.</p>
+            <p className="stage-label">Acesso</p>
+            <h2>Digite seu e-mail e senha</h2>
           </div>
 
           <div className="extract-grid">
