@@ -27,14 +27,14 @@ import {
 } from "./google-drive.js";
 import { buildProjectRoute, getUnlockedProjectStages, parseProjectRoute } from "./project-route.mjs";
 import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.js";
+import { getSupabaseBrowserClient } from "./supabase-browser.js";
 
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim();
+const supabase = getSupabaseBrowserClient();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
 const isLoopbackApiBase = (value = "") => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(value);
 const apiBase = envApiBase && !isLoopbackApiBase(envApiBase) ? envApiBase : productionApiBase;
-const authTokenStorageKey = "automatizador-tiktok.authToken";
-const authUserStorageKey = "automatizador-tiktok.authUser";
 const currentRunStorageKey = "automatizador-tiktok.currentRunId";
 const draftStorageKey = "automatizador-tiktok.draft";
 const driveSessionStorageKey = "automatizador-tiktok.googleDriveSession";
@@ -775,15 +775,9 @@ function DriveStage({
 }
 
 export function App() {
-  const [authToken, setAuthToken] = useState(() => localStorage.getItem(authTokenStorageKey) || "");
-  const [user, setUser] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(authUserStorageKey) || "null");
-    } catch {
-      return null;
-    }
-  });
-  const [authLoading, setAuthLoading] = useState(Boolean(localStorage.getItem(authTokenStorageKey)));
+  const [authToken, setAuthToken] = useState("");
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [loginEmail, setLoginEmail] = useState("andre09azevedo@gmail.com");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -830,11 +824,66 @@ export function App() {
   }, [replacementPreviews]);
 
   useEffect(() => {
-    if (!authToken) {
-      setAuthLoading(false);
-      return;
+    let active = true;
+
+    async function bootAuth() {
+      if (!supabase) {
+        if (!active) return;
+        setLoginError("Falta configurar o Supabase no deploy para liberar o login.");
+        setAuthLoading(false);
+        return;
+      }
+
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (!active) return;
+        if (session?.access_token) {
+          setAuthToken(session.access_token);
+          setUser({
+            id: session.user.id,
+            email: session.user.email || "",
+            role: session.user.role || "authenticated",
+          });
+          return;
+        }
+        setAuthToken("");
+        setUser(null);
+      });
+
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (!active) return;
+        if (sessionError) throw sessionError;
+
+        if (session?.access_token) {
+          const restored = await restoreSession(session.access_token, session.user);
+          if (!restored) {
+            await supabase.auth.signOut();
+          }
+          return;
+        }
+
+        setAuthLoading(false);
+      } catch {
+        if (!active) return;
+        setLoginError("Não consegui restaurar sua sessão. Faça login novamente.");
+        setAuthLoading(false);
+      }
+
+      return () => subscription.unsubscribe();
     }
-    restoreSession(authToken);
+
+    const cleanupPromise = bootAuth();
+
+    return () => {
+      active = false;
+      Promise.resolve(cleanupPromise).then((cleanup) => cleanup?.());
+    };
   }, []);
 
   useEffect(() => {
@@ -960,14 +1009,19 @@ export function App() {
     if (authToken) loadProjects();
   }
 
-  function logout({ statusMessage = "Sessão encerrada." } = {}) {
+  async function logout({ statusMessage = "Sessão encerrada.", signOut = true } = {}) {
+    if (signOut && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore sign-out transport errors and clear local state anyway
+      }
+    }
     setAuthToken("");
     setUser(null);
     setLoginPassword("");
     setLoginError("");
     setProjects([]);
-    localStorage.removeItem(authTokenStorageKey);
-    localStorage.removeItem(authUserStorageKey);
     clearDriveSession(driveSessionStorageKey);
     setDriveSession(null);
     setDriveFolders([]);
@@ -980,7 +1034,7 @@ export function App() {
     setAuthLoading(false);
   }
 
-  async function restoreSession(token) {
+  async function restoreSession(token, sessionUser = null) {
     setAuthLoading(true);
     try {
       const response = await fetch(`${apiBase}/api/auth/session`, {
@@ -989,16 +1043,22 @@ export function App() {
       const data = await readJsonResponse(response, "Não consegui restaurar sua sessão.");
       if (!response.ok) throw new Error(data.error || "Sessão inválida.");
       setAuthToken(token);
-      setUser(data.user);
-      localStorage.setItem(authTokenStorageKey, token);
-      localStorage.setItem(authUserStorageKey, JSON.stringify(data.user));
+      setUser(
+        data.user || {
+          id: sessionUser?.id || "",
+          email: sessionUser?.email || "",
+          role: sessionUser?.role || "authenticated",
+        }
+      );
       await loadProjects(token);
       const route = parseProjectRoute(window.location.pathname);
       if (route.view === "project" && route.runId) {
         await openProject(route.runId, { silent: true, syncRoute: false, token });
       }
+      return true;
     } catch {
-      logout({ statusMessage: "Faça login para acessar seus projetos." });
+      await logout({ statusMessage: "Faça login para acessar seus projetos.", signOut: false });
+      return false;
     } finally {
       setAuthLoading(false);
     }
@@ -1006,23 +1066,28 @@ export function App() {
 
   async function login() {
     setLoginError("");
+    if (!supabase) {
+      setLoginError("Falta configurar o Supabase no deploy para liberar o login.");
+      return;
+    }
     setAuthLoading(true);
     try {
-      const response = await fetch(`${apiBase}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: loginEmail,
-          password: loginPassword,
-        }),
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword,
       });
-      const data = await readJsonResponse(response, "Não consegui fazer login.");
-      if (!response.ok) throw new Error(data.error || "Não consegui fazer login.");
+      if (signInError) throw signInError;
+      if (!data.session?.access_token) {
+        throw new Error("O Supabase não retornou uma sessão válida.");
+      }
       setLoginPassword("");
-      await restoreSession(data.token);
+      const restored = await restoreSession(data.session.access_token, data.user);
+      if (!restored) {
+        throw new Error("Login concluído no Supabase, mas o backend não aceitou sua sessão.");
+      }
       setStatus("Login concluído. Seus projetos foram carregados.");
     } catch (requestError) {
-      setLoginError(requestError.message);
+      setLoginError(requestError.message || "Não consegui fazer login.");
       setAuthLoading(false);
     }
   }

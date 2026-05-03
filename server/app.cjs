@@ -7,7 +7,6 @@ const path = require("node:path");
 const multer = require("multer");
 const JSZip = require("jszip");
 
-const { createAuth } = require("./lib/auth.cjs");
 const { compositeSlide, createDefaultLayer, normalizeLayer } = require("./lib/compositor.cjs");
 const { createOcrRunner } = require("./lib/ocr.cjs");
 const { createRunStore } = require("./lib/run-store.cjs");
@@ -25,6 +24,7 @@ const {
   extractCaptionAndHashtags,
   launchPersistentContext,
 } = require("./lib/tiktok.cjs");
+const { createSupabaseAuth } = require("./lib/supabase-auth.cjs");
 const { translateTexts } = require("./lib/translate.cjs");
 
 function buildRunResponse(run) {
@@ -153,7 +153,7 @@ function createApp(config = {}) {
     profileDir,
     isHeadless,
   };
-  const auth = config.auth || createAuth();
+  const auth = config.auth || createSupabaseAuth(config.supabase || {});
 
   app.use(
     cors({
@@ -171,15 +171,6 @@ function createApp(config = {}) {
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, mode: "preview-and-drive", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
-  });
-
-  app.post("/api/auth/login", (req, res) => {
-    const session = auth.authenticate(req.body?.email, req.body?.password);
-    if (!session) {
-      res.status(401).json({ error: "E-mail ou senha inválidos." });
-      return;
-    }
-    res.json(session);
   });
 
   app.get("/api/auth/session", auth.requireAuth, (req, res) => {

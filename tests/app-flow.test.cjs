@@ -30,15 +30,6 @@ describe("app flow", () => {
     app = createApp({
       rootDir,
       auth: {
-        authenticate(email, password) {
-          if (email === "andre09azevedo@gmail.com" && password === "StudioDrive2026!") {
-            return {
-              token: "test-token",
-              user: { id: "andre09azevedo@gmail.com", email: "andre09azevedo@gmail.com", role: "admin" },
-            };
-          }
-          return null;
-        },
         requireAuth(req, res, next) {
           if (req.headers.authorization === "Bearer test-token") {
             req.auth = {
@@ -100,13 +91,7 @@ describe("app flow", () => {
         translateTexts: async ({ texts, from, to }) => texts.map((text) => `[${from}->${to}] ${text}`),
       },
     });
-
-    const login = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "andre09azevedo@gmail.com", password: "StudioDrive2026!" })
-      .expect(200);
-
-    authHeader = { Authorization: `Bearer ${login.body.token}` };
+    authHeader = { Authorization: "Bearer test-token" };
   });
 
   it("extracts, saves review, renders and persists Drive delivery metadata", async () => {
