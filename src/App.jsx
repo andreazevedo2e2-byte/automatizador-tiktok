@@ -861,10 +861,7 @@ export function App() {
         if (sessionError) throw sessionError;
 
         if (session?.access_token) {
-          const restored = await restoreSession(session.access_token, session.user);
-          if (!restored) {
-            await supabase.auth.signOut();
-          }
+          await restoreSession(session.access_token, session.user);
           return;
         }
 
@@ -1037,28 +1034,19 @@ export function App() {
   async function restoreSession(token, sessionUser = null) {
     setAuthLoading(true);
     try {
-      const response = await fetch(`${apiBase}/api/auth/session`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await readJsonResponse(response, "Não consegui restaurar sua sessão.");
-      if (!response.ok) throw new Error(data.error || "Sessão inválida.");
       setAuthToken(token);
-      setUser(
-        data.user || {
-          id: sessionUser?.id || "",
-          email: sessionUser?.email || "",
-          role: sessionUser?.role || "authenticated",
-        }
-      );
+      setUser({
+        id: sessionUser?.id || "",
+        email: sessionUser?.email || "",
+        role: sessionUser?.role || "authenticated",
+      });
       await loadProjects(token);
       const route = parseProjectRoute(window.location.pathname);
       if (route.view === "project" && route.runId) {
         await openProject(route.runId, { silent: true, syncRoute: false, token });
       }
-      return true;
     } catch {
-      await logout({ statusMessage: "Faça login para acessar seus projetos.", signOut: false });
-      return false;
+      setStatus("Login concluído, mas não consegui carregar seus projetos agora.");
     } finally {
       setAuthLoading(false);
     }
@@ -1081,10 +1069,7 @@ export function App() {
         throw new Error("O Supabase não retornou uma sessão válida.");
       }
       setLoginPassword("");
-      const restored = await restoreSession(data.session.access_token, data.user);
-      if (!restored) {
-        throw new Error("Login concluído no Supabase, mas o backend não aceitou sua sessão.");
-      }
+      await restoreSession(data.session.access_token, data.user);
       setStatus("Login concluído. Seus projetos foram carregados.");
     } catch (requestError) {
       setLoginError(requestError.message || "Não consegui fazer login.");
