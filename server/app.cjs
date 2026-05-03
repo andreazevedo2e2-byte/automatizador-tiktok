@@ -7,6 +7,7 @@ const path = require("node:path");
 const multer = require("multer");
 const JSZip = require("jszip");
 
+const { createAuth } = require("./lib/auth.cjs");
 const { compositeSlide, createDefaultLayer, normalizeLayer } = require("./lib/compositor.cjs");
 const { createOcrRunner } = require("./lib/ocr.cjs");
 const { createRunStore } = require("./lib/run-store.cjs");
@@ -29,6 +30,8 @@ const { translateTexts } = require("./lib/translate.cjs");
 function buildRunResponse(run) {
   return {
     runId: run.runId,
+    ownerId: run.ownerId || "",
+    projectName: run.projectName || "",
     sourceUrl: run.sourceUrl,
     provider: run.provider,
     stage: run.stage,
@@ -40,6 +43,12 @@ function buildRunResponse(run) {
     driveExport: run.driveExport || null,
     slides: run.slides,
   };
+}
+
+function normalizeProjectName(value, fallback) {
+  const normalized = String(value || "").trim();
+  if (normalized) return normalized.slice(0, 120);
+  return String(fallback || "Novo projeto").trim().slice(0, 120) || "Novo projeto";
 }
 
 function buildSlideLayers(slide) {
@@ -144,6 +153,7 @@ function createApp(config = {}) {
     profileDir,
     isHeadless,
   };
+  const auth = config.auth || createAuth();
 
   app.use(
     cors({
@@ -163,33 +173,46 @@ function createApp(config = {}) {
     res.json({ ok: true, mode: "preview-and-drive", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
   });
 
-  app.get("/api/projects", async (_req, res) => {
+  app.post("/api/auth/login", (req, res) => {
+    const session = auth.authenticate(req.body?.email, req.body?.password);
+    if (!session) {
+      res.status(401).json({ error: "E-mail ou senha inválidos." });
+      return;
+    }
+    res.json(session);
+  });
+
+  app.get("/api/auth/session", auth.requireAuth, (req, res) => {
+    res.json({ user: req.auth.user });
+  });
+
+  app.get("/api/projects", auth.requireAuth, async (req, res) => {
     try {
-      res.json({ items: await store.listRuns() });
+      res.json({ items: await store.listRuns(req.auth.user.id) });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not load projects." });
     }
   });
 
-  app.get("/api/runs/:runId", async (req, res) => {
+  app.get("/api/runs/:runId", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       res.json(buildRunResponse(run));
     } catch {
       res.status(404).json({ error: "Run not found." });
     }
   });
 
-  app.delete("/api/runs/:runId", async (req, res) => {
+  app.delete("/api/runs/:runId", auth.requireAuth, async (req, res) => {
     try {
-      await store.deleteRun(req.params.runId);
+      await store.deleteRun(req.params.runId, req.auth.user.id);
       res.json({ ok: true });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not delete run." });
     }
   });
 
-  app.post("/api/open-login", async (_req, res) => {
+  app.post("/api/open-login", auth.requireAuth, async (_req, res) => {
     try {
       if (!sharedBrowserContext.current) {
         sharedBrowserContext.current = await launchPersistentContext(profileDir, isHeadless);
@@ -211,7 +234,7 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/translate", async (req, res) => {
+  app.post("/api/translate", auth.requireAuth, async (req, res) => {
     try {
       const { texts = [], from = "en", to = "pt" } = req.body || {};
       const translated = await services.translateTexts({ texts, from, to });
@@ -221,7 +244,7 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/extract", async (req, res) => {
+  app.post("/api/extract", auth.requireAuth, async (req, res) => {
     try {
       const sourceUrl = normalizeTikTokUrl(req.body.url);
       const runId = timestamp();
@@ -260,8 +283,11 @@ function createApp(config = {}) {
         ? await services.translateTexts({ texts: [captionEnglish], from: "en", to: "pt" })
         : [""];
 
+      const defaultProjectName = normalizeProjectName(req.body?.projectName, captionPortuguese || captionEnglish || sourceUrl);
       const run = {
         runId,
+        ownerId: req.auth.user.id,
+        projectName: defaultProjectName,
         sourceUrl,
         provider,
         stage: "review",
@@ -281,7 +307,7 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/ocr-upload", upload.array("slides", 30), async (req, res) => {
+  app.post("/api/ocr-upload", auth.requireAuth, upload.array("slides", 30), async (req, res) => {
     try {
       const files = Array.isArray(req.files) ? req.files : [];
       if (!files.length) throw new Error("Upload at least one slide image.");
@@ -306,6 +332,8 @@ function createApp(config = {}) {
 
       const run = {
         runId,
+        ownerId: req.auth.user.id,
+        projectName: normalizeProjectName(req.body?.projectName, "Novo projeto por imagens"),
         sourceUrl: "local-upload",
         provider: "upload",
         stage: "review",
@@ -325,10 +353,24 @@ function createApp(config = {}) {
     }
   });
 
-  app.put("/api/runs/:runId/review", async (req, res) => {
+  app.put("/api/runs/:runId/meta", auth.requireAuth, async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const nextRun = {
+        ...run,
+        projectName: normalizeProjectName(req.body?.projectName, run.projectName || run.captionPortuguese || run.captionEnglish || run.sourceUrl),
+      };
+      await store.saveRun(nextRun);
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not save project metadata." });
+    }
+  });
+
+  app.put("/api/runs/:runId/review", auth.requireAuth, async (req, res) => {
     try {
       const { slides = [], captionEnglish = "", captionPortuguese = "", hashtags = [] } = req.body || {};
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const slideMap = new Map(slides.map((slide) => [Number(slide.index), slide]));
 
       const nextSlides = run.slides.map((slide) => {
@@ -358,7 +400,7 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/runs/:runId/reconcile-review", async (req, res) => {
+  app.post("/api/runs/:runId/reconcile-review", auth.requireAuth, async (req, res) => {
     try {
       const { slides = [], captionPortuguese = "" } = req.body || {};
       const slideTexts = slides.map((slide) => String(slide.reviewedPortuguese || ""));
@@ -379,9 +421,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/runs/:runId/replacements", upload.array("images", 30), async (req, res) => {
+  app.post("/api/runs/:runId/replacements", auth.requireAuth, upload.array("images", 30), async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const files = Array.isArray(req.files) ? req.files : [];
       if (!files.length) throw new Error("Upload at least one replacement image.");
       if (files.length !== run.slides.length) {
@@ -410,9 +452,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/runs/:runId/slides/:index/replacement", upload.single("image"), async (req, res) => {
+  app.post("/api/runs/:runId/slides/:index/replacement", auth.requireAuth, upload.single("image"), async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const slideIndex = Number(req.params.index);
       if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
       const slide = run.slides.find((entry) => entry.index === slideIndex);
@@ -442,9 +484,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/runs/:runId/render", async (req, res) => {
+  app.post("/api/runs/:runId/render", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const missingImage = run.slides.find((slide) => !slide.replacementImagePath);
       if (missingImage) {
         throw new Error("Upload all replacement images before rendering.");
@@ -489,9 +531,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.put("/api/runs/:runId/slides/:index/layers", async (req, res) => {
+  app.put("/api/runs/:runId/slides/:index/layers", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const slideIndex = Number(req.params.index);
       if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
       const layers = Array.isArray(req.body?.layers) ? req.body.layers : [];
@@ -520,9 +562,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.put("/api/runs/:runId/drive-target", async (req, res) => {
+  app.put("/api/runs/:runId/drive-target", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const driveTarget = normalizeDriveTarget(req.body || {});
       const nextRun = {
         ...run,
@@ -536,9 +578,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.put("/api/runs/:runId/drive-export", async (req, res) => {
+  app.put("/api/runs/:runId/drive-export", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const driveExport = normalizeDriveExport(req.body || {});
       const nextRun = {
         ...run,
@@ -557,9 +599,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.get("/api/runs/:runId/slides/:index/download", async (req, res) => {
+  app.get("/api/runs/:runId/slides/:index/download", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       const slide = run.slides.find((entry) => entry.index === Number(req.params.index));
       if (!slide?.renderedImagePath) {
         throw new Error("Rendered slide not found.");
@@ -570,9 +612,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.get("/api/runs/:runId/export.zip", async (req, res) => {
+  app.get("/api/runs/:runId/export.zip", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId);
+      const run = await store.loadRun(req.params.runId, req.auth.user.id);
       if (!run.slides.every((slide) => slide.renderedImagePath)) {
         throw new Error("Render the slideshow before downloading the ZIP.");
       }

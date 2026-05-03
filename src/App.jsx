@@ -1,4 +1,4 @@
-import {
+﻿import {
   ArrowRight,
   Check,
   ChevronLeft,
@@ -33,6 +33,8 @@ const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
 const isLoopbackApiBase = (value = "") => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(value);
 const apiBase = envApiBase && !isLoopbackApiBase(envApiBase) ? envApiBase : productionApiBase;
+const authTokenStorageKey = "automatizador-tiktok.authToken";
+const authUserStorageKey = "automatizador-tiktok.authUser";
 const currentRunStorageKey = "automatizador-tiktok.currentRunId";
 const draftStorageKey = "automatizador-tiktok.draft";
 const driveSessionStorageKey = "automatizador-tiktok.googleDriveSession";
@@ -41,7 +43,7 @@ const sampleUrl =
 
 const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
-  { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
+  { key: "review", number: "02", title: "Revisar", hint: "Texto em portuguÃªs" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
   { key: "preview", number: "04", title: "Preview", hint: "Validar slideshow" },
   { key: "publish", number: "05", title: "Enviar", hint: "Google Drive" },
@@ -53,6 +55,14 @@ const stageByRun = {
   render: "preview",
   preview: "preview",
   publish: "publish",
+};
+
+const stageNames = {
+  review: "revisÃ£o",
+  images: "imagens",
+  render: "render",
+  preview: "preview",
+  publish: "drive",
 };
 
 const stageIndex = Object.fromEntries(steps.map((step, index) => [step.key, index]));
@@ -89,10 +99,21 @@ function getUnlockedStages(run) {
 }
 
 function projectTitle(project) {
+  if (String(project.projectName || "").trim()) return String(project.projectName).trim();
   const caption = project.captionPortuguese || project.captionEnglish || "";
   if (caption.trim()) return caption.trim().slice(0, 54);
   const handle = String(project.sourceUrl || "").match(/@([^/]+)/)?.[1];
   return handle ? `Post @${handle}` : `Projeto ${project.runId}`;
+}
+
+function projectFolderLabel(project) {
+  if (project.driveExport?.profileFolderName && project.driveExport?.postFolderName) {
+    return `${project.driveExport.profileFolderName} / ${project.driveExport.postFolderName}`;
+  }
+  if (project.driveTarget?.folderName) {
+    return `${project.driveTarget.folderName} / aguardando envio`;
+  }
+  return "sem pasta escolhida";
 }
 
 async function readJsonResponse(response, fallbackMessage) {
@@ -100,7 +121,7 @@ async function readJsonResponse(response, fallbackMessage) {
   try {
     return text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`${fallbackMessage} O servidor respondeu em formato inválido. Atualize a página e tente de novo.`);
+    throw new Error(`${fallbackMessage} O servidor respondeu em formato invÃ¡lido. Atualize a pÃ¡gina e tente de novo.`);
   }
 }
 
@@ -149,7 +170,7 @@ function StepRail({ activeStage, unlockedStages, hasProject, onSelectStage, onGo
   );
 }
 
-function StudioHeader({ activeStage, status, hasProject, onGoHome }) {
+function StudioHeader({ activeStage, status, hasProject, user, onGoHome, onLogout }) {
   const activeStep = steps[stageIndex[activeStage] || 0];
 
   return (
@@ -165,6 +186,17 @@ function StudioHeader({ activeStage, status, hasProject, onGoHome }) {
             Voltar aos projetos
           </button>
         ) : null}
+        {user ? (
+          <div className="status-pill">
+            <span>Conta</span>
+            <strong>{user.email}</strong>
+            <small>
+              <button className="linkish-button" type="button" onClick={onLogout}>
+                Sair
+              </button>
+            </small>
+          </div>
+        ) : null}
         <div className="status-pill">
           <span>{activeStep.number}</span>
           <strong>{activeStep.title}</strong>
@@ -172,6 +204,52 @@ function StudioHeader({ activeStage, status, hasProject, onGoHome }) {
         </div>
       </div>
     </header>
+  );
+}
+
+function LoginScreen({ email, password, setEmail, setPassword, loading, onSubmit, error }) {
+  return (
+    <main className="app-shell auth-shell">
+      <section className="studio auth-studio">
+        <header className="studio-header">
+          <div>
+            <p className="kicker">Acesso privado</p>
+            <h1>Entrar no Automatizador TikTok</h1>
+          </div>
+        </header>
+
+        <section className="stage-card auth-card">
+          <div className="stage-copy">
+            <p className="stage-label">Login</p>
+            <h2>Seus projetos ficam ligados Ã  sua conta</h2>
+            <p>Entre uma vez para continuar do ponto em que parou em qualquer acesso do site.</p>
+          </div>
+
+          <div className="extract-grid">
+            <label className="input-group">
+              <span>E-mail</span>
+              <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="seuemail@exemplo.com" />
+            </label>
+            <label className="input-group">
+              <span>Senha</span>
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Sua senha" />
+            </label>
+            <div className="extract-actions">
+              <button className="action-button main-action huge-action" type="button" onClick={onSubmit} disabled={loading}>
+                {loading ? <Loader2 className="spin" size={18} /> : <ArrowRight size={18} />}
+                Entrar
+              </button>
+            </div>
+            {error ? (
+              <div className="error-banner" role="alert">
+                <strong>Precisa de atenÃ§Ã£o</strong>
+                <span>{error}</span>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      </section>
+    </main>
   );
 }
 
@@ -225,7 +303,7 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
         {total > 1 && (
           <>
             <button className="story-tap-zone story-tap-zone--left" type="button" onClick={onPrev} disabled={!canGoBack} aria-label="Slide anterior" />
-            <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={!canGoNext} aria-label="Próximo slide" />
+            <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={!canGoNext} aria-label="PrÃ³ximo slide" />
             <div className="story-hint" aria-hidden="true">
               Clique nas laterais para passar
             </div>
@@ -285,7 +363,7 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
       <div className="stage-copy">
         <p className="stage-label">Projetos</p>
         <h2>Continue de onde parou</h2>
-        <p>Se você já começou um post antes, ele aparece aqui com a etapa atual salva.</p>
+        <p>Se voc? j? come?ou um post antes, ele aparece aqui com a etapa atual, a pasta escolhida e as hashtags salvas.</p>
       </div>
 
       {loading ? (
@@ -295,7 +373,7 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
         </div>
       ) : !projects.length ? (
         <div className="empty-publish">
-          <p>Ainda não há projetos salvos.</p>
+          <p>Ainda n?o h? projetos salvos.</p>
         </div>
       ) : (
         <div className="account-grid">
@@ -303,7 +381,9 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
             <article className="account-card selected" key={project.runId}>
               <div>
                 <strong>{projectTitle(project)}</strong>
-                <small>{project.slideCount} slides · etapa {project.stage}</small>
+                <small>{project.slideCount} slides ? etapa {stageNames[project.stage] || project.stage}</small>
+                <small>{projectFolderLabel(project)}</small>
+                {!!project.hashtags?.length && <small>{project.hashtags.join(" ")}</small>}
               </div>
               <div className="download-actions">
                 <button className="action-button quiet-action" type="button" onClick={() => onOpenProject(project.runId)}>
@@ -318,6 +398,41 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+function ProjectMetaBar({ run, projectName, setProjectName, saving, onSave }) {
+  if (!run) return null;
+
+  return (
+    <section className="stage-card">
+      <div className="extract-grid">
+        <label className="input-group">
+          <span>Nome do projeto</span>
+          <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Ex: Perfil 1 - post motiva??o" />
+        </label>
+        <div className="extract-actions">
+          <button className="action-button ghost-action huge-action" type="button" onClick={onSave} disabled={saving}>
+            {saving ? <Loader2 className="spin" size={18} /> : <Check size={18} />}
+            Salvar nome
+          </button>
+        </div>
+      </div>
+      <div className="account-grid">
+        <article className="account-card selected">
+          <div>
+            <strong>Etapa atual</strong>
+            <small>{stageNames[run.stage] || run.stage}</small>
+          </div>
+        </article>
+        <article className="account-card selected">
+          <div>
+            <strong>Pasta de destino</strong>
+            <small>{projectFolderLabel(run)}</small>
+          </div>
+        </article>
+      </div>
     </section>
   );
 }
@@ -344,7 +459,7 @@ function ReviewStage({
         <div>
           <p className="stage-label">Etapa 02</p>
           <h2>Revise o texto do slide</h2>
-          <p>Você edita em português. Na geração, eu transformo essa revisão em inglês por baixo.</p>
+          <p>VocÃª edita em portuguÃªs. Na geraÃ§Ã£o, eu transformo essa revisÃ£o em inglÃªs por baixo.</p>
         </div>
         <div className="review-toolbar__actions">
           <span className="review-count">
@@ -371,11 +486,11 @@ function ReviewStage({
 
         <div className="editor-panel review-editor-panel">
           <label className="input-group tall">
-            <span>Texto em português do slide {slide?.index}</span>
+            <span>Texto em portuguÃªs do slide {slide?.index}</span>
             <textarea
               value={slide?.reviewedPortuguese || ""}
               onChange={(event) => onSlideChange({ ...slide, reviewedPortuguese: event.target.value })}
-              placeholder="Corrija o texto deste slide em português..."
+              placeholder="Corrija o texto deste slide em portuguÃªs..."
             />
           </label>
 
@@ -383,7 +498,7 @@ function ReviewStage({
             <div className="post-meta-panel">
               {hasContent(captionPortuguese) && (
                 <label className="input-group">
-                  <span>Descrição do TikTok</span>
+                  <span>DescriÃ§Ã£o do TikTok</span>
                   <textarea value={captionPortuguese} onChange={(event) => setCaptionPortuguese(event.target.value)} />
                 </label>
               )}
@@ -423,7 +538,7 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
       <div className="stage-copy">
         <p className="stage-label">Etapa 03</p>
         <h2>Envie suas novas imagens</h2>
-        <p>Você pode escolher tudo de uma vez ou ir completando aos poucos. Eu mantenho a ordem e preparo o slideshow final.</p>
+        <p>VocÃª pode escolher tudo de uma vez ou ir completando aos poucos. Eu mantenho a ordem e preparo o slideshow final.</p>
       </div>
 
       <button
@@ -435,7 +550,7 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
       >
         <ImagePlus size={34} />
         <strong>{selectedFiles.length ? `${selectedFiles.length}/${expected} imagens na fila` : "Escolher ou arrastar imagens"}</strong>
-        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. Você pode adicionar só as que faltam.`}</span>
+        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. VocÃª pode adicionar sÃ³ as que faltam.`}</span>
       </button>
       <input hidden ref={inputRef} type="file" accept="image/*" multiple onChange={handleFileInput} />
 
@@ -445,7 +560,7 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
           Adicionar imagens
         </button>
         <button className="action-button quiet-action" type="button" onClick={onClearFiles} disabled={!selectedFiles.length || uploading}>
-          Limpar seleção
+          Limpar seleÃ§Ã£o
         </button>
       </div>
 
@@ -457,10 +572,10 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
                 <img src={preview.url} alt={`Nova imagem ${index + 1}`} />
                 <div className="image-slot-card__actions">
                   <button type="button" onClick={() => onMoveFile(index, index - 1)} disabled={uploading || index === 0}>
-                    ←
+                    â†
                   </button>
                   <button type="button" onClick={() => onMoveFile(index, index + 1)} disabled={uploading || index === selectedFiles.length - 1}>
-                    →
+                    â†’
                   </button>
                   <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading}>
                     Remover
@@ -527,11 +642,11 @@ function PreviewStage({ run, activeIndex, setActiveIndex, onContinue }) {
 
           {hasContent(caption) && (
             <article className="script-card">
-              <span>Descrição final</span>
+              <span>DescriÃ§Ã£o final</span>
               <p>{caption}</p>
               <button type="button" onClick={() => navigator.clipboard.writeText(caption)}>
                 <Clipboard size={16} />
-                Copiar descrição
+                Copiar descriÃ§Ã£o
               </button>
             </article>
           )}
@@ -577,10 +692,10 @@ function DriveStage({
         <div className="stage-copy">
           <p className="stage-label">Etapa 05</p>
           <h2>Enviar para o Google Drive</h2>
-          <p>Escolha a pasta do perfil. Eu crio automaticamente uma subpasta como post 1, post 2, post 3 e envio tudo para lá.</p>
+          <p>Escolha a pasta do perfil. Eu crio automaticamente uma subpasta como post 1, post 2, post 3 e envio tudo para lÃ¡.</p>
           {run.driveExport ? (
             <article className="script-card compact-script">
-              <span>Último envio</span>
+              <span>Ãšltimo envio</span>
               <p>
                 {run.driveExport.profileFolderName} / {run.driveExport.postFolderName}
               </p>
@@ -607,7 +722,7 @@ function DriveStage({
 
           {!googleClientId ? (
             <div className="empty-publish">
-              <p>Falta configurar `VITE_GOOGLE_CLIENT_ID` para liberar a conexão com o Google Drive.</p>
+              <p>Falta configurar `VITE_GOOGLE_CLIENT_ID` para liberar a conexÃ£o com o Google Drive.</p>
             </div>
           ) : !driveConnected ? (
             <div className="empty-publish">
@@ -646,7 +761,7 @@ function DriveStage({
           ) : null}
 
           <article className="script-card compact-script">
-            <span>Legenda final em inglês</span>
+            <span>Legenda final em inglÃªs</span>
             <p>{caption || "Sem legenda detectada."}</p>
           </article>
 
@@ -661,10 +776,23 @@ function DriveStage({
 }
 
 export function App() {
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(authTokenStorageKey) || "");
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(authUserStorageKey) || "null");
+    } catch {
+      return null;
+    }
+  });
+  const [authLoading, setAuthLoading] = useState(Boolean(localStorage.getItem(authTokenStorageKey)));
+  const [loginEmail, setLoginEmail] = useState("andre09azevedo@gmail.com");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
   const [url, setUrl] = useState(sampleUrl);
   const [status, setStatus] = useState("Pronto para começar.");
   const [error, setError] = useState("");
   const [run, setRun] = useState(null);
+  const [projectName, setProjectName] = useState("");
   const [draftSlides, setDraftSlides] = useState([]);
   const [draftCaptionEnglish, setDraftCaptionEnglish] = useState("");
   const [draftCaptionPortuguese, setDraftCaptionPortuguese] = useState("");
@@ -674,6 +802,7 @@ export function App() {
   const [replacementFiles, setReplacementFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [savingReview, setSavingReview] = useState(false);
+  const [savingProjectMeta, setSavingProjectMeta] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [driveSession, setDriveSession] = useState(() => restoreDriveSession(driveSessionStorageKey));
   const [driveFolders, setDriveFolders] = useState([]);
@@ -702,15 +831,16 @@ export function App() {
   }, [replacementPreviews]);
 
   useEffect(() => {
-    loadProjects();
-    const route = parseProjectRoute(window.location.pathname);
-    if (route.view === "project" && route.runId) {
-      openProject(route.runId, { silent: true, syncRoute: false });
+    if (!authToken) {
+      setAuthLoading(false);
+      return;
     }
+    restoreSession(authToken);
   }, []);
 
   useEffect(() => {
     function handlePopState() {
+      if (!authToken) return;
       const route = parseProjectRoute(window.location.pathname);
       if (route.view === "project" && route.runId) {
         openProject(route.runId, { silent: true, syncRoute: false });
@@ -721,7 +851,7 @@ export function App() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [run?.runId]);
+  }, [authToken, run?.runId]);
 
   useEffect(() => {
     if (!run?.runId) {
@@ -752,12 +882,29 @@ export function App() {
     }
   }, [activeStage, driveSession?.accessToken]);
 
+  function authHeaders(extra = {}) {
+    return {
+      ...extra,
+      Authorization: `Bearer ${authToken}`,
+    };
+  }
+
+  async function apiFetch(input, init = {}) {
+    const response = await fetch(input, {
+      ...init,
+      headers: authHeaders(init.headers || {}),
+    });
+    if (response.status === 401) {
+      logout({ statusMessage: "Sua sessão expirou. Faça login novamente." });
+    }
+    return response;
+  }
+
   function syncProjectRoute(runId, { replace = false } = {}) {
     const nextUrl = buildProjectRoute(runId);
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (nextUrl === currentUrl) return;
-    const method = replace ? "replaceState" : "pushState";
-    window.history[method]({}, "", nextUrl);
+    window.history[replace ? "replaceState" : "pushState"]({}, "", nextUrl);
   }
 
   function hydrateRun(nextRun, options = {}) {
@@ -765,6 +912,7 @@ export function App() {
     const nextStage = nextUnlockedStages.includes(options.stage) ? options.stage : getActiveStage(nextRun);
 
     setRun(nextRun);
+    setProjectName(nextRun.projectName || projectTitle(nextRun));
     setDraftSlides(nextRun.slides.map((slide) => ({ ...slide })));
     setDraftCaptionEnglish(nextRun.captionEnglish || "");
     setDraftCaptionPortuguese(nextRun.captionPortuguese || "");
@@ -793,6 +941,7 @@ export function App() {
 
   function clearActiveProject() {
     setRun(null);
+    setProjectName("");
     setDraftSlides([]);
     setDraftCaptionEnglish("");
     setDraftCaptionPortuguese("");
@@ -809,13 +958,84 @@ export function App() {
     localStorage.removeItem(currentRunStorageKey);
     setError("");
     setStatus(statusMessage);
-    loadProjects();
+    if (authToken) loadProjects();
   }
 
-  async function loadProjects() {
+  function logout({ statusMessage = "Sessão encerrada." } = {}) {
+    setAuthToken("");
+    setUser(null);
+    setLoginPassword("");
+    setLoginError("");
+    setProjects([]);
+    localStorage.removeItem(authTokenStorageKey);
+    localStorage.removeItem(authUserStorageKey);
+    clearDriveSession(driveSessionStorageKey);
+    setDriveSession(null);
+    setDriveFolders([]);
+    clearActiveProject();
+    localStorage.removeItem(currentRunStorageKey);
+    localStorage.removeItem(draftStorageKey);
+    window.history.replaceState({}, "", "/");
+    setError("");
+    setStatus(statusMessage);
+    setAuthLoading(false);
+  }
+
+  async function restoreSession(token) {
+    setAuthLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/api/auth/session`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await readJsonResponse(response, "Não consegui restaurar sua sessão.");
+      if (!response.ok) throw new Error(data.error || "Sessão inválida.");
+      setAuthToken(token);
+      setUser(data.user);
+      localStorage.setItem(authTokenStorageKey, token);
+      localStorage.setItem(authUserStorageKey, JSON.stringify(data.user));
+      await loadProjects(token);
+      const route = parseProjectRoute(window.location.pathname);
+      if (route.view === "project" && route.runId) {
+        await openProject(route.runId, { silent: true, syncRoute: false, token });
+      }
+    } catch {
+      logout({ statusMessage: "Faça login para acessar seus projetos." });
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function login() {
+    setLoginError("");
+    setAuthLoading(true);
+    try {
+      const response = await fetch(`${apiBase}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: loginEmail,
+          password: loginPassword,
+        }),
+      });
+      const data = await readJsonResponse(response, "Não consegui fazer login.");
+      if (!response.ok) throw new Error(data.error || "Não consegui fazer login.");
+      setLoginPassword("");
+      await restoreSession(data.token);
+      setStatus("Login concluído. Seus projetos foram carregados.");
+    } catch (requestError) {
+      setLoginError(requestError.message);
+      setAuthLoading(false);
+    }
+  }
+
+  async function loadProjects(tokenOverride) {
+    const token = tokenOverride || authToken;
+    if (!token) return;
     setLoadingProjects(true);
     try {
-      const response = await fetch(`${apiBase}/api/projects`);
+      const response = await fetch(`${apiBase}/api/projects`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await readJsonResponse(response, "Não consegui carregar seus projetos.");
       if (!response.ok) throw new Error(data.error || "Não consegui carregar seus projetos.");
       setProjects(data.items || []);
@@ -826,12 +1046,14 @@ export function App() {
     }
   }
 
-  async function openProject(runId, { silent = false, syncRoute = true } = {}) {
-    if (!runId) return;
+  async function openProject(runId, { silent = false, syncRoute = true, token } = {}) {
+    if (!runId || !(token || authToken)) return;
     setError("");
     if (!silent) setStatus("Abrindo projeto salvo...");
     try {
-      const response = await fetch(`${apiBase}/api/runs/${runId}`);
+      const response = await fetch(`${apiBase}/api/runs/${runId}`, {
+        headers: { Authorization: `Bearer ${token || authToken}` },
+      });
       const data = await readJsonResponse(response, "Não consegui abrir esse projeto.");
       if (!response.ok) throw new Error(data.error || "Projeto não encontrado.");
       hydrateRun(data, { syncRoute });
@@ -850,7 +1072,7 @@ export function App() {
     if (!confirmed) return;
     setError("");
     try {
-      const response = await fetch(`${apiBase}/api/runs/${runId}`, { method: "DELETE" });
+      const response = await apiFetch(`${apiBase}/api/runs/${runId}`, { method: "DELETE" });
       const data = await readJsonResponse(response, "Não consegui excluir esse projeto.");
       if (!response.ok) throw new Error(data.error || "Não consegui excluir esse projeto.");
       if (run?.runId === runId) {
@@ -866,16 +1088,38 @@ export function App() {
     }
   }
 
+  async function saveProjectMeta() {
+    if (!run) return;
+    setSavingProjectMeta(true);
+    setError("");
+    try {
+      const response = await apiFetch(`${apiBase}/api/runs/${run.runId}/meta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectName }),
+      });
+      const data = await readJsonResponse(response, "Não consegui salvar o nome do projeto.");
+      if (!response.ok) throw new Error(data.error || "Não consegui salvar o nome do projeto.");
+      hydrateRun(data, { stage: selectedStage, replaceRoute: true });
+      setStatus("Nome do projeto salvo.");
+      await loadProjects();
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSavingProjectMeta(false);
+    }
+  }
+
   async function extractPost() {
     setError("");
     setExtracting(true);
     setStatus("Extraindo slides, OCR e legenda do post...");
 
     try {
-      const response = await fetch(`${apiBase}/api/extract`, {
+      const response = await apiFetch(`${apiBase}/api/extract`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, projectName }),
       });
       const data = await readJsonResponse(response, "Não consegui extrair esse post.");
       if (!response.ok) throw new Error(data.error || "Não consegui extrair esse post.");
@@ -901,7 +1145,8 @@ export function App() {
     try {
       const formData = new FormData();
       selected.forEach((file) => formData.append("slides", file));
-      const response = await fetch(`${apiBase}/api/ocr-upload`, { method: "POST", body: formData });
+      formData.append("projectName", projectName);
+      const response = await apiFetch(`${apiBase}/api/ocr-upload`, { method: "POST", body: formData });
       const data = await readJsonResponse(response, "Não consegui ler esses prints.");
       if (!response.ok) throw new Error(data.error || "Não consegui ler esses prints.");
       hydrateRun(data);
@@ -927,7 +1172,7 @@ export function App() {
     setStatus("Salvando revisão e preparando inglês final...");
 
     try {
-      const reconcileResponse = await fetch(`${apiBase}/api/runs/${run.runId}/reconcile-review`, {
+      const reconcileResponse = await apiFetch(`${apiBase}/api/runs/${run.runId}/reconcile-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -951,7 +1196,7 @@ export function App() {
       });
       const captionEnglishToSave = reconciled.captionEnglish || draftCaptionEnglish;
 
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/review`, {
+      const response = await apiFetch(`${apiBase}/api/runs/${run.runId}/review`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1030,7 +1275,7 @@ export function App() {
     try {
       const formData = new FormData();
       replacementFiles.forEach((file) => formData.append("images", file));
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/replacements`, {
+      const response = await apiFetch(`${apiBase}/api/runs/${run.runId}/replacements`, {
         method: "POST",
         body: formData,
       });
@@ -1038,7 +1283,7 @@ export function App() {
       if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
 
       setStatus("Imagens salvas. Gerando slideshow final...");
-      const renderResponse = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
+      const renderResponse = await apiFetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
       const renderData = await readJsonResponse(renderResponse, "Não consegui gerar o preview final.");
       if (!renderResponse.ok) throw new Error(renderData.error || "Não consegui gerar o preview final.");
 
@@ -1112,7 +1357,7 @@ export function App() {
     if (!run || !folder?.id) return;
 
     try {
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/drive-target`, {
+      const response = await apiFetch(`${apiBase}/api/runs/${run.runId}/drive-target`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1187,6 +1432,7 @@ export function App() {
         content: JSON.stringify(
           {
             runId: run.runId,
+            projectName: run.projectName,
             sourceUrl: run.sourceUrl,
             captionEnglish: run.captionEnglish,
             captionPortuguese: run.captionPortuguese,
@@ -1203,7 +1449,7 @@ export function App() {
         ),
       });
 
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/drive-export`, {
+      const response = await apiFetch(`${apiBase}/api/runs/${run.runId}/drive-export`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1249,6 +1495,10 @@ export function App() {
     }
   }
 
+  if (!user) {
+    return <LoginScreen email={loginEmail} password={loginPassword} setEmail={setLoginEmail} setPassword={setLoginPassword} loading={authLoading} onSubmit={login} error={loginError} />;
+  }
+
   return (
     <main className="app-shell">
       <StepRail
@@ -1260,7 +1510,7 @@ export function App() {
       />
 
       <section className="studio">
-        <StudioHeader activeStage={activeStage} status={status} hasProject={Boolean(run)} onGoHome={() => goHome()} />
+        <StudioHeader activeStage={activeStage} status={status} hasProject={Boolean(run)} user={user} onGoHome={() => goHome()} onLogout={() => logout()} />
 
         {error && (
           <div className="error-banner" role="alert">
@@ -1269,15 +1519,11 @@ export function App() {
           </div>
         )}
 
+        {run ? <ProjectMetaBar run={run} projectName={projectName} setProjectName={setProjectName} saving={savingProjectMeta} onSave={saveProjectMeta} /> : null}
+
         {activeStage === "extract" && (
           <>
-            <ExtractStage
-              url={url}
-              setUrl={setUrl}
-              extracting={extracting}
-              onExtract={extractPost}
-              onUploadScreenshots={uploadScreenshots}
-            />
+            <ExtractStage url={url} setUrl={setUrl} extracting={extracting} onExtract={extractPost} onUploadScreenshots={uploadScreenshots} />
             <ProjectShelf projects={projects} loading={loadingProjects} onOpenProject={openProject} onDeleteProject={deleteProject} />
           </>
         )}
@@ -1341,7 +1587,7 @@ export function App() {
           />
         )}
 
-        {(extracting || savingReview || uploadingImages || exportingDrive) && (
+        {(authLoading || extracting || savingReview || savingProjectMeta || uploadingImages || exportingDrive) && (
           <div className="work-overlay">
             <LoadingInline active />
             <span>{status}</span>

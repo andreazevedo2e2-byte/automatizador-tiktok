@@ -21,6 +21,7 @@ async function makeImage(color) {
 describe("app flow", () => {
   let rootDir;
   let app;
+  let authHeader;
 
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "tt-app-"));
@@ -28,6 +29,28 @@ describe("app flow", () => {
 
     app = createApp({
       rootDir,
+      auth: {
+        authenticate(email, password) {
+          if (email === "andre09azevedo@gmail.com" && password === "StudioDrive2026!") {
+            return {
+              token: "test-token",
+              user: { id: "andre09azevedo@gmail.com", email: "andre09azevedo@gmail.com", role: "admin" },
+            };
+          }
+          return null;
+        },
+        requireAuth(req, res, next) {
+          if (req.headers.authorization === "Bearer test-token") {
+            req.auth = {
+              token: "test-token",
+              user: { id: "andre09azevedo@gmail.com", email: "andre09azevedo@gmail.com", role: "admin" },
+            };
+            next();
+            return;
+          }
+          res.status(401).json({ error: "Sessão inválida. Faça login novamente." });
+        },
+      },
       services: {
         captureSlidesViaSnapTik: async (_url, slidesDir) => {
           await fs.mkdir(slidesDir, { recursive: true });
@@ -77,15 +100,24 @@ describe("app flow", () => {
         translateTexts: async ({ texts, from, to }) => texts.map((text) => `[${from}->${to}] ${text}`),
       },
     });
+
+    const login = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "andre09azevedo@gmail.com", password: "StudioDrive2026!" })
+      .expect(200);
+
+    authHeader = { Authorization: `Bearer ${login.body.token}` };
   });
 
   it("extracts, saves review, renders and persists Drive delivery metadata", async () => {
     const extract = await request(app)
       .post("/api/extract")
+      .set(authHeader)
       .send({ url: "https://www.tiktok.com/@foo/photo/1234567890123456789" })
       .expect(200);
 
     expect(extract.body.stage).toBe("review");
+    expect(extract.body.projectName).toContain("This changed my routine");
     expect(extract.body.captionEnglish).toBe("This changed my routine");
     expect(extract.body.hashtags).toEqual(["#fitness", "#habits"]);
     expect(extract.body.slides[0].ocrPortuguese).toContain("[en->pt]");
@@ -94,6 +126,7 @@ describe("app flow", () => {
 
     const review = await request(app)
       .put(`/api/runs/${runId}/review`)
+      .set(authHeader)
       .send({
         captionEnglish: "Updated caption #fitness #daily",
         captionPortuguese: "Legenda atualizada",
@@ -110,19 +143,29 @@ describe("app flow", () => {
 
     const upload = await request(app)
       .post(`/api/runs/${runId}/replacements`)
+      .set(authHeader)
       .attach("images", await makeImage("#221144"), "a.jpg")
       .attach("images", await makeImage("#114422"), "b.jpg")
       .expect(200);
 
     expect(upload.body.stage).toBe("render");
 
-    const render = await request(app).post(`/api/runs/${runId}/render`).expect(200);
+    const meta = await request(app)
+      .put(`/api/runs/${runId}/meta`)
+      .set(authHeader)
+      .send({ projectName: "Projeto Shape 01" })
+      .expect(200);
+
+    expect(meta.body.projectName).toBe("Projeto Shape 01");
+
+    const render = await request(app).post(`/api/runs/${runId}/render`).set(authHeader).expect(200);
     expect(render.body.stage).toBe("preview");
     expect(render.body.slides[0].renderedImageUrl).toContain("/rendered/");
     expect(render.body.slides[0].textLayers?.length).toBeGreaterThan(0);
 
     const driveTarget = await request(app)
       .put(`/api/runs/${runId}/drive-target`)
+      .set(authHeader)
       .send({
         folderId: "perfil-2-id",
         folderName: "perfil 2",
@@ -137,6 +180,7 @@ describe("app flow", () => {
 
     const driveExport = await request(app)
       .put(`/api/runs/${runId}/drive-export`)
+      .set(authHeader)
       .send({
         profileFolderId: "perfil-2-id",
         profileFolderName: "perfil 2",
@@ -157,18 +201,20 @@ describe("app flow", () => {
     });
     expect(driveExport.body.driveExport.files).toHaveLength(2);
 
-    const reopened = await request(app).get(`/api/runs/${runId}`).expect(200);
+    const reopened = await request(app).get(`/api/runs/${runId}`).set(authHeader).expect(200);
     expect(reopened.body.driveTarget.folderName).toBe("perfil 2");
     expect(reopened.body.driveExport.postFolderName).toBe("post 1");
+    expect(reopened.body.projectName).toBe("Projeto Shape 01");
 
-    const projects = await request(app).get("/api/projects").expect(200);
+    const projects = await request(app).get("/api/projects").set(authHeader).expect(200);
     expect(projects.body.items[0]).toMatchObject({
       runId,
+      projectName: "Projeto Shape 01",
       slideCount: 2,
       stage: "publish",
     });
 
-    await request(app).delete(`/api/runs/${runId}`).expect(200);
-    await request(app).get(`/api/runs/${runId}`).expect(404);
+    await request(app).delete(`/api/runs/${runId}`).set(authHeader).expect(200);
+    await request(app).get(`/api/runs/${runId}`).set(authHeader).expect(404);
   });
 });

@@ -36,12 +36,18 @@ function createRunStore(rootDir) {
     return run;
   }
 
-  async function loadRun(runId) {
+  async function loadRun(runId, ownerId) {
     const raw = await fs.readFile(getManifestPath(runId), "utf8");
-    return JSON.parse(raw);
+    const run = JSON.parse(raw);
+    if (ownerId && run.ownerId !== ownerId) {
+      const error = new Error("Run not found.");
+      error.code = "RUN_NOT_FOUND";
+      throw error;
+    }
+    return run;
   }
 
-  async function listRuns() {
+  async function listRuns(ownerId) {
     let entries = [];
     try {
       entries = await fs.readdir(runsDir, { withFileTypes: true });
@@ -55,13 +61,20 @@ function createRunStore(rootDir) {
       try {
         const manifestPath = getManifestPath(entry.name);
         const [run, stats] = await Promise.all([loadRun(entry.name), fs.stat(manifestPath)]);
+        if (ownerId && run.ownerId !== ownerId) {
+          continue;
+        }
         runs.push({
           runId: run.runId,
+          ownerId: run.ownerId || "",
+          projectName: run.projectName || "",
           sourceUrl: run.sourceUrl,
           stage: run.stage,
           captionPortuguese: run.captionPortuguese || "",
           captionEnglish: run.captionEnglish || "",
           hashtags: run.hashtags || [],
+          driveTarget: run.driveTarget || null,
+          driveExport: run.driveExport || null,
           slideCount: Array.isArray(run.slides) ? run.slides.length : 0,
           updatedAt: stats.mtime.toISOString(),
           createdAt: run.createdAt || run.runId,
@@ -74,12 +87,15 @@ function createRunStore(rootDir) {
     return runs.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
   }
 
-  async function deleteRun(runId) {
+  async function deleteRun(runId, ownerId) {
+    if (ownerId) {
+      await loadRun(runId, ownerId);
+    }
     await fs.rm(getRunDir(runId), { recursive: true, force: true });
   }
 
-  async function updateRun(runId, updater) {
-    const current = await loadRun(runId);
+  async function updateRun(runId, updater, ownerId) {
+    const current = await loadRun(runId, ownerId);
     const next = typeof updater === "function" ? await updater(current) : { ...current, ...updater };
     await saveRun(next);
     return next;
