@@ -79,6 +79,23 @@ a {
   overflow: visible;
 }
 
+.auth-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-studio {
+  width: min(560px, 100%);
+  min-height: auto;
+  margin: 0 auto;
+}
+
+.auth-card {
+  min-height: auto;
+}
+
 .step-rail,
 .studio,
 .stage-card,
