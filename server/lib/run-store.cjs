@@ -4,6 +4,25 @@ const path = require("node:path");
 function createRunStore(rootDir) {
   const runsDir = path.join(rootDir, "runs");
 
+  function normalizeOwnerIds(ownerId) {
+    if (!ownerId) return [];
+    if (Array.isArray(ownerId)) {
+      return ownerId.map((value) => String(value || "").trim()).filter(Boolean);
+    }
+    return [String(ownerId || "").trim()].filter(Boolean);
+  }
+
+  function matchesOwner(run, ownerId) {
+    const ownerIds = normalizeOwnerIds(ownerId);
+    if (!ownerIds.length) return true;
+    const runOwners = [
+      String(run.ownerId || "").trim(),
+      String(run.ownerEmail || "").trim(),
+    ].filter(Boolean);
+    if (!runOwners.length) return true;
+    return ownerIds.some((value) => runOwners.includes(value));
+  }
+
   function getRunDir(runId) {
     return path.join(runsDir, runId);
   }
@@ -39,7 +58,7 @@ function createRunStore(rootDir) {
   async function loadRun(runId, ownerId) {
     const raw = await fs.readFile(getManifestPath(runId), "utf8");
     const run = JSON.parse(raw);
-    if (ownerId && run.ownerId !== ownerId) {
+    if (!matchesOwner(run, ownerId)) {
       const error = new Error("Run not found.");
       error.code = "RUN_NOT_FOUND";
       throw error;
@@ -61,7 +80,7 @@ function createRunStore(rootDir) {
       try {
         const manifestPath = getManifestPath(entry.name);
         const [run, stats] = await Promise.all([loadRun(entry.name), fs.stat(manifestPath)]);
-        if (ownerId && run.ownerId !== ownerId) {
+        if (!matchesOwner(run, ownerId)) {
           continue;
         }
         runs.push({

@@ -43,7 +43,7 @@ const sampleUrl =
 
 const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
-  { key: "review", number: "02", title: "Revisar", hint: "Texto em portuguÃªs" },
+  { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
   { key: "preview", number: "04", title: "Preview", hint: "Validar slideshow" },
   { key: "publish", number: "05", title: "Enviar", hint: "Google Drive" },
@@ -58,7 +58,7 @@ const stageByRun = {
 };
 
 const stageNames = {
-  review: "revisÃ£o",
+  review: "revisão",
   images: "imagens",
   render: "render",
   preview: "preview",
@@ -121,7 +121,7 @@ async function readJsonResponse(response, fallbackMessage) {
   try {
     return text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`${fallbackMessage} O servidor respondeu em formato invÃ¡lido. Atualize a pÃ¡gina e tente de novo.`);
+    throw new Error(`${fallbackMessage} O servidor respondeu em formato inválido. Atualize a página e tente de novo.`);
   }
 }
 
@@ -241,7 +241,7 @@ function LoginScreen({ email, password, setEmail, setPassword, loading, onSubmit
             </div>
             {error ? (
               <div className="error-banner" role="alert">
-                <strong>Precisa de atenÃ§Ã£o</strong>
+                <strong>Precisa de atenção</strong>
                 <span>{error}</span>
               </div>
             ) : null}
@@ -302,7 +302,7 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
         {total > 1 && (
           <>
             <button className="story-tap-zone story-tap-zone--left" type="button" onClick={onPrev} disabled={!canGoBack} aria-label="Slide anterior" />
-            <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={!canGoNext} aria-label="PrÃ³ximo slide" />
+            <button className="story-tap-zone story-tap-zone--right" type="button" onClick={onNext} disabled={!canGoNext} aria-label="Próximo slide" />
             <div className="story-hint" aria-hidden="true">
               Clique nas laterais para passar
             </div>
@@ -372,7 +372,7 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
         </div>
       ) : !projects.length ? (
         <div className="empty-publish">
-          <p>Ainda n?o h? projetos salvos.</p>
+          <p>Ainda não há projetos salvos.</p>
         </div>
       ) : (
         <div className="account-grid">
@@ -409,7 +409,7 @@ function ProjectMetaBar({ run, projectName, setProjectName, saving, onSave }) {
       <div className="extract-grid">
         <label className="input-group">
           <span>Nome do projeto</span>
-          <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Ex: Perfil 1 - post motiva??o" />
+          <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Ex: Perfil 1 - post motivação" />
         </label>
         <div className="extract-actions">
           <button className="action-button ghost-action huge-action" type="button" onClick={onSave} disabled={saving}>
@@ -458,7 +458,7 @@ function ReviewStage({
         <div>
           <p className="stage-label">Etapa 02</p>
           <h2>Revise o texto do slide</h2>
-          <p>VocÃª edita em portuguÃªs. Na geraÃ§Ã£o, eu transformo essa revisÃ£o em inglÃªs por baixo.</p>
+          <p>Você edita em português. Na geração, eu transformo essa revisão em inglês por baixo.</p>
         </div>
         <div className="review-toolbar__actions">
           <span className="review-count">
@@ -485,11 +485,11 @@ function ReviewStage({
 
         <div className="editor-panel review-editor-panel">
           <label className="input-group tall">
-            <span>Texto em portuguÃªs do slide {slide?.index}</span>
+            <span>Texto em português do slide {slide?.index}</span>
             <textarea
               value={slide?.reviewedPortuguese || ""}
               onChange={(event) => onSlideChange({ ...slide, reviewedPortuguese: event.target.value })}
-              placeholder="Corrija o texto deste slide em portuguÃªs..."
+              placeholder="Corrija o texto deste slide em português..."
             />
           </label>
 
@@ -497,7 +497,7 @@ function ReviewStage({
             <div className="post-meta-panel">
               {hasContent(captionPortuguese) && (
                 <label className="input-group">
-                  <span>DescriÃ§Ã£o do TikTok</span>
+                  <span>Descrição do TikTok</span>
                   <textarea value={captionPortuguese} onChange={(event) => setCaptionPortuguese(event.target.value)} />
                 </label>
               )}
@@ -537,7 +537,7 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
       <div className="stage-copy">
         <p className="stage-label">Etapa 03</p>
         <h2>Envie suas novas imagens</h2>
-        <p>VocÃª pode escolher tudo de uma vez ou ir completando aos poucos. Eu mantenho a ordem e preparo o slideshow final.</p>
+        <p>Você pode escolher tudo de uma vez ou ir completando aos poucos. Eu mantenho a ordem e preparo o slideshow final.</p>
       </div>
 
       <button
@@ -549,7 +549,7 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
       >
         <ImagePlus size={34} />
         <strong>{selectedFiles.length ? `${selectedFiles.length}/${expected} imagens na fila` : "Escolher ou arrastar imagens"}</strong>
-        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. VocÃª pode adicionar sÃ³ as que faltam.`}</span>
+        <span>{ready ? "Tudo certo para enviar." : `Faltam ${missing} imagens. Você pode adicionar só as que faltam.`}</span>
       </button>
       <input hidden ref={inputRef} type="file" accept="image/*" multiple onChange={handleFileInput} />
 
@@ -559,7 +559,7 @@ function ImageStage({ run, selectedFiles, previews, onSelectFiles, onRemoveFile,
           Adicionar imagens
         </button>
         <button className="action-button quiet-action" type="button" onClick={onClearFiles} disabled={!selectedFiles.length || uploading}>
-          Limpar seleÃ§Ã£o
+          Limpar seleção
         </button>
       </div>
 
@@ -641,11 +641,11 @@ function PreviewStage({ run, activeIndex, setActiveIndex, onContinue }) {
 
           {hasContent(caption) && (
             <article className="script-card">
-              <span>DescriÃ§Ã£o final</span>
+              <span>Descrição final</span>
               <p>{caption}</p>
               <button type="button" onClick={() => navigator.clipboard.writeText(caption)}>
                 <Clipboard size={16} />
-                Copiar descriÃ§Ã£o
+                Copiar descrição
               </button>
             </article>
           )}
@@ -691,10 +691,10 @@ function DriveStage({
         <div className="stage-copy">
           <p className="stage-label">Etapa 05</p>
           <h2>Enviar para o Google Drive</h2>
-          <p>Escolha a pasta do perfil. Eu crio automaticamente uma subpasta como post 1, post 2, post 3 e envio tudo para lÃ¡.</p>
+          <p>Escolha a pasta do perfil. Eu crio automaticamente uma subpasta como post 1, post 2, post 3 e envio tudo para lá.</p>
           {run.driveExport ? (
             <article className="script-card compact-script">
-              <span>Ãšltimo envio</span>
+              <span>Último envio</span>
               <p>
                 {run.driveExport.profileFolderName} / {run.driveExport.postFolderName}
               </p>
@@ -721,7 +721,7 @@ function DriveStage({
 
           {!googleClientId ? (
             <div className="empty-publish">
-              <p>Falta configurar `VITE_GOOGLE_CLIENT_ID` para liberar a conexÃ£o com o Google Drive.</p>
+              <p>Falta configurar `VITE_GOOGLE_CLIENT_ID` para liberar a conexão com o Google Drive.</p>
             </div>
           ) : !driveConnected ? (
             <div className="empty-publish">
@@ -760,7 +760,7 @@ function DriveStage({
           ) : null}
 
           <article className="script-card compact-script">
-            <span>Legenda final em inglÃªs</span>
+            <span>Legenda final em inglês</span>
             <p>{caption || "Sem legenda detectada."}</p>
           </article>
 
@@ -1240,7 +1240,7 @@ export function App() {
         const match = reconciled.slides.find((entry) => entry.index === slide.index);
         return {
           ...slide,
-          reviewedEnglish: match?.reviewedEnglish || slide.reviewedEnglish,
+          reviewedEnglish: matchá.reviewedEnglish || slide.reviewedEnglish,
         };
       });
       const captionEnglishToSave = reconciled.captionEnglish || draftCaptionEnglish;
@@ -1646,3 +1646,5 @@ export function App() {
     </main>
   );
 }
+
+

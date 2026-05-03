@@ -115,6 +115,10 @@ function normalizeDriveExport(input = {}) {
   };
 }
 
+function getOwnerKeys(user = {}) {
+  return [String(user.id || "").trim(), String(user.email || "").trim()].filter(Boolean);
+}
+
 function createApp(config = {}) {
   const app = express();
   const rootDir = config.rootDir || path.resolve(__dirname, "..");
@@ -179,7 +183,7 @@ function createApp(config = {}) {
 
   app.get("/api/projects", auth.requireAuth, async (req, res) => {
     try {
-      res.json({ items: await store.listRuns(req.auth.user.id) });
+      res.json({ items: await store.listRuns(getOwnerKeys(req.auth.user)) });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not load projects." });
     }
@@ -187,7 +191,7 @@ function createApp(config = {}) {
 
   app.get("/api/runs/:runId", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       res.json(buildRunResponse(run));
     } catch {
       res.status(404).json({ error: "Run not found." });
@@ -196,7 +200,7 @@ function createApp(config = {}) {
 
   app.delete("/api/runs/:runId", auth.requireAuth, async (req, res) => {
     try {
-      await store.deleteRun(req.params.runId, req.auth.user.id);
+      await store.deleteRun(req.params.runId, getOwnerKeys(req.auth.user));
       res.json({ ok: true });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not delete run." });
@@ -278,6 +282,7 @@ function createApp(config = {}) {
       const run = {
         runId,
         ownerId: req.auth.user.id,
+        ownerEmail: req.auth.user.email || "",
         projectName: defaultProjectName,
         sourceUrl,
         provider,
@@ -324,6 +329,7 @@ function createApp(config = {}) {
       const run = {
         runId,
         ownerId: req.auth.user.id,
+        ownerEmail: req.auth.user.email || "",
         projectName: normalizeProjectName(req.body?.projectName, "Novo projeto por imagens"),
         sourceUrl: "local-upload",
         provider: "upload",
@@ -346,7 +352,7 @@ function createApp(config = {}) {
 
   app.put("/api/runs/:runId/meta", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const nextRun = {
         ...run,
         projectName: normalizeProjectName(req.body?.projectName, run.projectName || run.captionPortuguese || run.captionEnglish || run.sourceUrl),
@@ -361,7 +367,7 @@ function createApp(config = {}) {
   app.put("/api/runs/:runId/review", auth.requireAuth, async (req, res) => {
     try {
       const { slides = [], captionEnglish = "", captionPortuguese = "", hashtags = [] } = req.body || {};
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const slideMap = new Map(slides.map((slide) => [Number(slide.index), slide]));
 
       const nextSlides = run.slides.map((slide) => {
@@ -414,7 +420,7 @@ function createApp(config = {}) {
 
   app.post("/api/runs/:runId/replacements", auth.requireAuth, upload.array("images", 30), async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const files = Array.isArray(req.files) ? req.files : [];
       if (!files.length) throw new Error("Upload at least one replacement image.");
       if (files.length !== run.slides.length) {
@@ -445,7 +451,7 @@ function createApp(config = {}) {
 
   app.post("/api/runs/:runId/slides/:index/replacement", auth.requireAuth, upload.single("image"), async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const slideIndex = Number(req.params.index);
       if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
       const slide = run.slides.find((entry) => entry.index === slideIndex);
@@ -477,7 +483,7 @@ function createApp(config = {}) {
 
   app.post("/api/runs/:runId/render", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const missingImage = run.slides.find((slide) => !slide.replacementImagePath);
       if (missingImage) {
         throw new Error("Upload all replacement images before rendering.");
@@ -524,7 +530,7 @@ function createApp(config = {}) {
 
   app.put("/api/runs/:runId/slides/:index/layers", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const slideIndex = Number(req.params.index);
       if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
       const layers = Array.isArray(req.body?.layers) ? req.body.layers : [];
@@ -555,7 +561,7 @@ function createApp(config = {}) {
 
   app.put("/api/runs/:runId/drive-target", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const driveTarget = normalizeDriveTarget(req.body || {});
       const nextRun = {
         ...run,
@@ -571,7 +577,7 @@ function createApp(config = {}) {
 
   app.put("/api/runs/:runId/drive-export", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const driveExport = normalizeDriveExport(req.body || {});
       const nextRun = {
         ...run,
@@ -592,7 +598,7 @@ function createApp(config = {}) {
 
   app.get("/api/runs/:runId/slides/:index/download", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       const slide = run.slides.find((entry) => entry.index === Number(req.params.index));
       if (!slide?.renderedImagePath) {
         throw new Error("Rendered slide not found.");
@@ -605,7 +611,7 @@ function createApp(config = {}) {
 
   app.get("/api/runs/:runId/export.zip", auth.requireAuth, async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, req.auth.user.id);
+      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
       if (!run.slides.every((slide) => slide.renderedImagePath)) {
         throw new Error("Render the slideshow before downloading the ZIP.");
       }
