@@ -362,7 +362,7 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
       <div className="stage-copy">
         <p className="stage-label">Projetos</p>
         <h2>Continue de onde parou</h2>
-        <p>Se voc? j? come?ou um post antes, ele aparece aqui com a etapa atual, a pasta escolhida e as hashtags salvas.</p>
+        <p>Se você já começou um post antes, ele aparece aqui com a etapa atual, a pasta escolhida e as hashtags salvas.</p>
       </div>
 
       {loading ? (
@@ -380,7 +380,7 @@ function ProjectShelf({ projects, loading, onOpenProject, onDeleteProject }) {
             <article className="account-card selected" key={project.runId}>
               <div>
                 <strong>{projectTitle(project)}</strong>
-                <small>{project.slideCount} slides ? etapa {stageNames[project.stage] || project.stage}</small>
+                <small>{project.slideCount} slides • etapa {stageNames[project.stage] || project.stage}</small>
                 <small>{projectFolderLabel(project)}</small>
                 {!!project.hashtags?.length && <small>{project.hashtags.join(" ")}</small>}
               </div>
