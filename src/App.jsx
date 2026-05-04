@@ -32,14 +32,9 @@ import { getSupabaseBrowserClient } from "./supabase-browser.js";
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim();
 const supabase = getSupabaseBrowserClient();
-const defaultLocalApiBase = "http://127.0.0.1:4141";
-const deprecatedApiBases = new Set(["https://zapspark-tiktok-extractor.te7sty.easypanel.host"]);
-const isLocalBrowser =
-  typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || "");
-const normalizedEnvApiBase = envApiBase?.replace(/\/+$/, "") || "";
-const apiBase =
-  (normalizedEnvApiBase && !deprecatedApiBases.has(normalizedEnvApiBase) ? normalizedEnvApiBase : "") ||
-  (isLocalBrowser ? defaultLocalApiBase : "");
+const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
+const isLoopbackApiBase = (value = "") => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(value);
+const apiBase = envApiBase && !isLoopbackApiBase(envApiBase) ? envApiBase : productionApiBase;
 const currentRunStorageKey = "automatizador-tiktok.currentRunId";
 const draftStorageKey = "automatizador-tiktok.draft";
 const driveSessionStorageKey = "automatizador-tiktok.googleDriveSession";
@@ -75,7 +70,6 @@ const stageIndex = Object.fromEntries(steps.map((step, index) => [step.key, inde
 function assetUrl(pathname) {
   if (!pathname) return "";
   if (/^https?:\/\//i.test(pathname)) return pathname;
-  if (!apiBase) return pathname;
   return `${apiBase}${pathname}`;
 }
 
@@ -129,10 +123,6 @@ async function readJsonResponse(response, fallbackMessage) {
   } catch {
     throw new Error(`${fallbackMessage} O servidor respondeu em formato inválido. Atualize a página e tente de novo.`);
   }
-}
-
-function backendConfigError() {
-  return new Error("Falta configurar a API atual do automatizador neste deploy.");
 }
 
 function LoadingInline({ active }) {
@@ -944,34 +934,15 @@ export function App() {
     };
   }
 
-  async function apiFetch(input, init = {}, timeoutMs = 15000) {
-    if (!apiBase) {
-      throw backendConfigError();
+  async function apiFetch(input, init = {}) {
+    const response = await fetch(input, {
+      ...init,
+      headers: authHeaders(init.headers || {}),
+    });
+    if (response.status === 401) {
+      logout({ statusMessage: "Sua sessão expirou. Faça login novamente." });
     }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(input, {
-        ...init,
-        headers: authHeaders(init.headers || {}),
-        signal: controller.signal,
-      });
-      if (response.status === 401) {
-        logout({ statusMessage: "Sua sessão expirou. Faça login novamente." });
-      }
-      return response;
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        throw new Error("A API demorou demais para responder. Tente novamente em instantes.");
-      }
-      if (error instanceof TypeError) {
-        throw new Error("Não consegui falar com a API do automatizador. Verifique a URL da API.");
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
+    return response;
   }
 
   function syncProjectRoute(runId, { replace = false } = {}) {
@@ -1111,19 +1082,13 @@ export function App() {
     if (!token) return;
     setLoadingProjects(true);
     try {
-      const response = await apiFetch(
-        `${apiBase}/api/projects`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        },
-        12000
-      );
+      const response = await fetch(`${apiBase}/api/projects`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await readJsonResponse(response, "Não consegui carregar seus projetos.");
       if (!response.ok) throw new Error(data.error || "Não consegui carregar seus projetos.");
       setProjects(data.items || []);
     } catch (requestError) {
-      setProjects([]);
-      setError(requestError.message);
       console.warn("[projects] load failed", requestError);
     } finally {
       setLoadingProjects(false);
@@ -1135,13 +1100,9 @@ export function App() {
     setError("");
     if (!silent) setStatus("Abrindo projeto salvo...");
     try {
-      const response = await apiFetch(
-        `${apiBase}/api/runs/${runId}`,
-        {
-          headers: { Authorization: `Bearer ${token || authToken}` },
-        },
-        12000
-      );
+      const response = await fetch(`${apiBase}/api/runs/${runId}`, {
+        headers: { Authorization: `Bearer ${token || authToken}` },
+      });
       const data = await readJsonResponse(response, "Não consegui abrir esse projeto.");
       if (!response.ok) throw new Error(data.error || "Projeto não encontrado.");
       hydrateRun(data, { syncRoute });
