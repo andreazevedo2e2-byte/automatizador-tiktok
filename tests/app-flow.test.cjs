@@ -202,4 +202,58 @@ describe("app flow", () => {
     await request(app).delete(`/api/runs/${runId}`).set(authHeader).expect(200);
     await request(app).get(`/api/runs/${runId}`).set(authHeader).expect(404);
   });
+
+  it("uses TikTok direct capture when SnapTik is unavailable", async () => {
+    const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tt-app-fallback-"));
+    const fallbackImage = await makeImage("#111111");
+    const fallbackApp = createApp({
+      rootDir: fallbackRoot,
+      auth: {
+        requireAuth(req, res, next) {
+          req.auth = {
+            token: "test-token",
+            user: { id: "andre09azevedo@gmail.com", email: "andre09azevedo@gmail.com", role: "admin" },
+          };
+          next();
+        },
+      },
+      services: {
+        captureSlidesViaSnapTik: async () => {
+          throw new Error("SnapTik timeout");
+        },
+        captureSlidesDirectly: async ({ slidesDir }) => {
+          await fs.mkdir(slidesDir, { recursive: true });
+          const slidePath = path.join(slidesDir, "slide-01.jpg");
+          await fs.writeFile(slidePath, fallbackImage);
+          return [slidePath];
+        },
+        runOcr: async (_paths, runId) => [
+          {
+            index: 1,
+            sourceImagePath: path.join(fallbackRoot, "runs", runId, "slides", "slide-01.jpg"),
+            sourceImageUrl: `/runs/${runId}/slides/slide-01.jpg`,
+            ocrEnglish: "Fallback text",
+            reviewedEnglish: "Fallback text",
+            confidence: 90,
+            status: "ocr-complete",
+            replacementImagePath: "",
+            replacementImageUrl: "",
+            renderedImagePath: "",
+            renderedImageUrl: "",
+          },
+        ],
+        extractCaptionAndHashtags: async () => ({ caption: "", hashtags: [] }),
+        translateTexts: async ({ texts }) => texts,
+      },
+    });
+
+    const extract = await request(fallbackApp)
+      .post("/api/extract")
+      .set(authHeader)
+      .send({ url: "https://www.tiktok.com/@foo/photo/1234567890123456789" })
+      .expect(200);
+
+    expect(extract.body.provider).toBe("tiktok-direct");
+    expect(extract.body.slides).toHaveLength(1);
+  });
 });

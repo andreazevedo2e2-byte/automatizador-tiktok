@@ -32,6 +32,33 @@ async function launchEphemeralBrowser() {
   });
 }
 
+const snaptikSlidePages = ["https://snaptik.app/pt/download-tiktok-slide", "https://snaptik.app/download-tiktok-slide"];
+
+async function prepareSnapTikPage(page) {
+  await page.route("**/*", (route) => {
+    const type = route.request().resourceType();
+    if (["font", "image", "media"].includes(type)) {
+      route.abort().catch(() => {});
+      return;
+    }
+    route.continue().catch(() => {});
+  });
+}
+
+async function gotoSnapTikSlidePage(page) {
+  let lastError = null;
+  for (const url of snaptikSlidePages) {
+    try {
+      await page.goto(url, { waitUntil: "commit", timeout: 30000 });
+      await page.waitForSelector("#url", { timeout: 20000 });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("SnapTik did not load.");
+}
+
 async function launchPersistentContext(profileDir, isHeadless) {
   const executablePath = await findChromeExecutable();
   return chromium.launchPersistentContext(profileDir, {
@@ -47,12 +74,10 @@ async function launchPersistentContext(profileDir, isHeadless) {
 async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
   const browser = await launchEphemeralBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  await prepareSnapTikPage(page);
 
   try {
-    await page.goto("https://snaptik.app/pt/download-tiktok-slide", {
-      waitUntil: "domcontentloaded",
-      timeout: 90000,
-    });
+    await gotoSnapTikSlidePage(page);
 
     await page.fill("#url", sourceUrl);
     await page.click('button[type="submit"], input[type="submit"], .button-submit');
@@ -334,12 +359,10 @@ async function extractTikTokOEmbedMetadata(sourceUrl) {
 async function extractSnapTikMetadata(sourceUrl) {
   const browser = await launchEphemeralBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  await prepareSnapTikPage(page);
 
   try {
-    await page.goto("https://snaptik.app/pt/download-tiktok-slide", {
-      waitUntil: "domcontentloaded",
-      timeout: 90000,
-    });
+    await gotoSnapTikSlidePage(page);
 
     await page.fill("#url", sourceUrl);
     await page.click('button[type="submit"], input[type="submit"], .button-submit');

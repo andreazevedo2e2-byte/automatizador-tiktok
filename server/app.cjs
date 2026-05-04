@@ -129,7 +129,7 @@ function createApp(config = {}) {
   const profileDir = path.join(rootDir, "browser-profile");
   const isHeadless = String(process.env.HEADLESS || "false").toLowerCase() === "true";
   const remoteLoginUrl = (process.env.REMOTE_LOGIN_URL || "").trim();
-  const allowDirectFallback = String(process.env.ALLOW_TIKTOK_DIRECT_FALLBACK || "false").toLowerCase() === "true";
+  const allowDirectFallback = String(process.env.ALLOW_TIKTOK_DIRECT_FALLBACK || "true").toLowerCase() !== "false";
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map((entry) => entry.trim())
