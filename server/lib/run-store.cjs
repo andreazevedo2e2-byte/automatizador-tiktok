@@ -41,6 +41,10 @@ function createRunStore(rootDir) {
     return JSON.parse(raw);
   }
 
+  async function deleteRun(runId) {
+    await fs.rm(getRunDir(runId), { recursive: true, force: true });
+  }
+
   async function updateRun(runId, updater) {
     const current = await loadRun(runId);
     const next = typeof updater === "function" ? await updater(current) : { ...current, ...updater };
@@ -50,6 +54,7 @@ function createRunStore(rootDir) {
 
   return {
     ensureRunDirs,
+    deleteRun,
     getManifestPath,
     getRenderedDir,
     getRunDir,
