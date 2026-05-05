@@ -173,10 +173,23 @@ function createSupabaseRestStore({ supabaseUrl, serviceRoleKey, fetchImpl = fetc
       return created || null;
     },
     async listHistory() {
-      return request(
+      const rows = await request(
         "/rest/v1/post_runs?select=*,post_destinations(*),post_events(*)&order=updated_at.desc&limit=100",
         { method: "GET", headers: { Prefer: "return=representation" } }
       );
+      return (rows || []).map((row) => ({
+        runId: row.run_id,
+        sourceUrl: row.source_url || "",
+        provider: row.provider || "",
+        stage: row.stage || "",
+        captionEnglish: row.caption_english || "",
+        captionPortuguese: row.caption_portuguese || "",
+        hashtags: row.hashtags || [],
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        destinations: row.post_destinations || [],
+        events: row.post_events || [],
+      }));
     },
   };
 }

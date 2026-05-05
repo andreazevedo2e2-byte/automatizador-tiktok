@@ -16,6 +16,12 @@ import { mergeReplacementFiles, moveReplacementFile } from "./replacement-files.
 const envApiBase = import.meta.env.VITE_API_BASE?.trim();
 const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.host";
 const apiBase = envApiBase || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4141" : productionApiBase);
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://caewwltkbmblwijkfrlz.supabase.co";
+const supabaseAnonKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  "sb_publishable_ujhVT6Uz1JoSHCW-fVuI6A_MuSHpSqH";
+const authSessionStorageKey = "automatizador-tiktok.authSession";
 const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
 const extractionEstimateSeconds = 300;
@@ -74,8 +80,93 @@ function formatDuration(seconds) {
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
+function stageLabel(stage) {
+  const labels = {
+    review: "Revisão",
+    images: "Imagens",
+    render: "Imagens",
+    preview: "Finalizado",
+    publish: "Finalizado",
+  };
+  return labels[stage] || "Novo";
+}
+
+function projectTitle(project) {
+  const caption = project.captionPortuguese || project.captionEnglish || "";
+  if (caption.trim()) return caption.trim().slice(0, 72);
+  try {
+    const url = new URL(project.sourceUrl || project.source_url || "");
+    const parts = url.pathname.split("/").filter(Boolean);
+    return parts.length >= 3 ? `${parts[0]} · ${parts[2]}` : parts[0] || `Projeto ${projectDate(project)}`;
+  } catch {
+    return `Projeto ${projectDate(project) || "salvo"}`;
+  }
+}
+
+function projectDate(project) {
+  const value = project.updatedAt || project.updated_at || project.createdAt || project.created_at;
+  if (!value) return "";
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(
+    new Date(value)
+  );
+}
+
 function LoadingIcon({ active }) {
   return active ? <Loader2 className="spin" size={18} /> : null;
+}
+
+function LoginScreen({ email, password, setEmail, setPassword, loading, onSubmit, error }) {
+  return (
+    <main className="app-shell auth-shell">
+      <section className="studio auth-studio">
+        <header className="studio-header auth-header">
+          <div>
+            <p className="kicker">Login</p>
+            <h1>Entrar</h1>
+          </div>
+        </header>
+
+        <section className="stage-card auth-card">
+          <div className="stage-copy">
+            <p className="stage-label">Acesso</p>
+            <h2>Digite seu e-mail e senha</h2>
+          </div>
+
+          <div className="auth-form">
+            <label className="input-group">
+              <span>E-mail</span>
+              <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" />
+            </label>
+
+            <label className="input-group">
+              <span>Senha</span>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") onSubmit();
+                }}
+                type="password"
+                autoComplete="current-password"
+                placeholder="Sua senha"
+              />
+            </label>
+
+            <button className="action-button main-action huge-action" type="button" onClick={onSubmit} disabled={loading}>
+              {loading ? <Loader2 className="spin" size={18} /> : <ArrowRight size={18} />}
+              Entrar
+            </button>
+          </div>
+
+          {error ? (
+            <div className="auth-error" role="alert">
+              {error}
+            </div>
+          ) : null}
+        </section>
+      </section>
+    </main>
+  );
 }
 
 function StepRail({ activeStage }) {
@@ -199,7 +290,51 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
   );
 }
 
-function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots, elapsedSeconds, remainingSeconds }) {
+function ProjectList({ projects, loading, onOpenProject, onRefreshProjects }) {
+  return (
+    <div className="projects-panel">
+      <div className="projects-panel__header">
+        <div>
+          <span>Projetos</span>
+          <strong>Continue de onde parou</strong>
+        </div>
+        <button className="action-button quiet-action" type="button" onClick={onRefreshProjects} disabled={loading}>
+          {loading ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
+          Atualizar
+        </button>
+      </div>
+
+      {projects.length ? (
+        <div className="project-grid">
+          {projects.map((project) => (
+            <button className="project-card" type="button" key={project.runId} onClick={() => onOpenProject(project)}>
+              <span>{stageLabel(project.stage)}</span>
+              <strong>{projectTitle(project)}</strong>
+              <small>{projectDate(project)}</small>
+              {project.hashtags?.length ? <em>{hashtagsToText(project.hashtags).slice(0, 90)}</em> : null}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="project-empty">{loading ? "Carregando projetos..." : "Nenhum projeto salvo ainda."}</div>
+      )}
+    </div>
+  );
+}
+
+function ExtractStage({
+  url,
+  setUrl,
+  onExtract,
+  extracting,
+  onUploadScreenshots,
+  elapsedSeconds,
+  remainingSeconds,
+  projects,
+  loadingProjects,
+  onOpenProject,
+  onRefreshProjects,
+}) {
   const uploadRef = useRef(null);
 
   return (
@@ -263,6 +398,8 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots,
         <Sparkles size={18} />
         <span>Fluxo: extrair, revisar, trocar imagens, conferir preview e enviar para o Drive.</span>
       </div>
+
+      <ProjectList projects={projects} loading={loadingProjects} onOpenProject={onOpenProject} onRefreshProjects={onRefreshProjects} />
     </section>
   );
 }
@@ -595,6 +732,17 @@ function DownloadStage({ run, activeIndex, setActiveIndex, driveFolders, loading
 }
 
 export function App() {
+  const [authSession, setAuthSession] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(authSessionStorageKey) || "null");
+    } catch {
+      return null;
+    }
+  });
+  const [loginEmail, setLoginEmail] = useState("andre09azevedo@gmail.com");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [url, setUrl] = useState(sampleUrl);
   const [status, setStatus] = useState("Pronto para começar.");
   const [error, setError] = useState("");
@@ -615,6 +763,8 @@ export function App() {
   const [driveFolders, setDriveFolders] = useState([]);
   const [loadingDrive, setLoadingDrive] = useState(false);
   const [exportingDrive, setExportingDrive] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
 
   const activeStage = getActiveStage(run);
   const extractionElapsedSeconds = extracting && extractStartedAt ? Math.floor((timerNow - extractStartedAt) / 1000) : 0;
@@ -677,6 +827,10 @@ export function App() {
     finishDriveOAuth();
   }, []);
 
+  useEffect(() => {
+    if (authSession) loadProjects({ silent: true });
+  }, [authSession]);
+
 
   function hydrateRun(nextRun) {
     setRun(nextRun);
@@ -687,6 +841,74 @@ export function App() {
     setCurrentReviewIndex(0);
     setPreviewIndex(0);
     setReplacementFiles([]);
+  }
+
+  async function login() {
+    setLoginError("");
+    setAuthLoading(true);
+    try {
+      const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error_description || data.msg || data.error || "Não consegui fazer login.");
+      localStorage.setItem(authSessionStorageKey, JSON.stringify(data));
+      setAuthSession(data);
+      setLoginPassword("");
+      setStatus("Login concluído.");
+    } catch (requestError) {
+      setLoginError(requestError.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function loadProjects({ silent = false } = {}) {
+    setLoadingProjects(true);
+    if (!silent) setError("");
+    try {
+      const response = await fetch(`${apiBase}/api/history`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui carregar os projetos.");
+      const items = (data.items || []).filter((item) => item.runId || item.run_id);
+      setProjects(
+        items.map((item) => ({
+          ...item,
+          runId: item.runId || item.run_id,
+          sourceUrl: item.sourceUrl || item.source_url || "",
+          captionEnglish: item.captionEnglish || item.caption_english || "",
+          captionPortuguese: item.captionPortuguese || item.caption_portuguese || "",
+          createdAt: item.createdAt || item.created_at,
+          updatedAt: item.updatedAt || item.updated_at,
+        }))
+      );
+    } catch (requestError) {
+      if (!silent) setError(requestError.message);
+    } finally {
+      setLoadingProjects(false);
+    }
+  }
+
+  async function openProject(project) {
+    setError("");
+    setStatus("Abrindo projeto...");
+    try {
+      const response = await fetch(`${apiBase}/api/runs/${project.runId}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui abrir esse projeto.");
+      hydrateRun(data);
+      setStatus("Projeto carregado.");
+    } catch {
+      setUrl(project.sourceUrl || project.source_url || url);
+      setError("Esse projeto está no histórico, mas os arquivos da execução não estão disponíveis no servidor. Extraia novamente pelo link.");
+      setStatus("Projeto não aberto.");
+    }
   }
 
   async function extractPost() {
@@ -704,6 +926,7 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui extrair esse post.");
       hydrateRun(data);
+      loadProjects({ silent: true });
       setStatus(`${data.slides.length} slides prontos para revisar.`);
     } catch (requestError) {
       setError(requestError.message);
@@ -729,6 +952,7 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui ler esses prints.");
       hydrateRun(data);
+      loadProjects({ silent: true });
       setStatus(`${data.slides.length} slides prontos para revisar.`);
     } catch (requestError) {
       setError(requestError.message);
@@ -788,6 +1012,7 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui salvar a revisão.");
       hydrateRun(data);
+      loadProjects({ silent: true });
       setStatus("Revisão salva. Agora envie suas imagens.");
     } catch (requestError) {
       setError(requestError.message);
@@ -865,6 +1090,7 @@ export function App() {
       if (!renderResponse.ok) throw new Error(rendered.error || "Não consegui gerar o preview.");
 
       hydrateRun(rendered);
+      loadProjects({ silent: true });
       setStatus("Preview pronto. Você já pode baixar ou enviar para o Drive.");
       loadDriveFolders({ silent: true });
     } catch (requestError) {
@@ -920,6 +1146,7 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui enviar para o Drive.");
       hydrateRun(data.run);
+      loadProjects({ silent: true });
       setStatus(`Arquivos enviados para ${data.driveExport?.folderName || "o Drive"}.`);
     } catch (requestError) {
       setError(requestError.message);
@@ -929,6 +1156,19 @@ export function App() {
     }
   }
 
+  if (!authSession) {
+    return (
+      <LoginScreen
+        email={loginEmail}
+        password={loginPassword}
+        setEmail={setLoginEmail}
+        setPassword={setLoginPassword}
+        loading={authLoading}
+        onSubmit={login}
+        error={loginError}
+      />
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -953,6 +1193,10 @@ export function App() {
             onUploadScreenshots={uploadScreenshots}
             elapsedSeconds={extractionElapsedSeconds}
             remainingSeconds={extractionRemainingSeconds}
+            projects={projects}
+            loadingProjects={loadingProjects}
+            onOpenProject={openProject}
+            onRefreshProjects={loadProjects}
           />
         )}
 

@@ -79,6 +79,50 @@ a {
   overflow: hidden;
 }
 
+.auth-shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(320px, 760px);
+  place-content: center;
+  padding: 24px;
+  overflow: auto;
+}
+
+.auth-studio {
+  min-height: auto;
+  height: auto;
+}
+
+.auth-header {
+  padding: 26px 28px 0;
+}
+
+.auth-card {
+  height: auto;
+  min-height: 0;
+  margin: 18px 28px 28px;
+  display: grid;
+  gap: 24px;
+  padding: clamp(22px, 4vw, 38px);
+  overflow: visible;
+}
+
+.auth-form {
+  display: grid;
+  gap: 16px;
+  max-width: 520px;
+}
+
+.auth-error {
+  max-width: 520px;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 113, 113, 0.42);
+  border-radius: 18px;
+  background: rgba(255, 113, 113, 0.13);
+  color: #ffd5d5;
+  font-weight: 800;
+}
+
 .step-rail,
 .studio,
 .stage-card,
@@ -308,8 +352,9 @@ h2 {
 .extract-stage,
 .generate-stage {
   display: grid;
-  align-content: center;
+  align-content: start;
   gap: 24px;
+  overflow: auto;
 }
 
 .extract-box {
@@ -445,6 +490,85 @@ button:disabled,
   border: 1px solid rgba(255, 135, 88, 0.24);
   border-radius: 999px;
   background: rgba(255, 135, 88, 0.08);
+}
+
+.projects-panel {
+  display: grid;
+  gap: 14px;
+  max-width: 1120px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.projects-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.projects-panel__header span,
+.project-card span {
+  display: block;
+  color: var(--orange);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.projects-panel__header strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 22px;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.project-card,
+.project-empty {
+  min-height: 122px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--ink);
+}
+
+.project-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  text-align: left;
+}
+
+.project-card strong,
+.project-card small,
+.project-card em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-card strong {
+  white-space: nowrap;
+}
+
+.project-card small,
+.project-card em,
+.project-empty {
+  color: var(--muted);
+}
+
+.project-card em {
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .extract-timer {
