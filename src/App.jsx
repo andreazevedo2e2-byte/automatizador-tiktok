@@ -597,7 +597,7 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
   );
 }
 
-function DrivePanel({ run, folders, loading, exporting, onRefresh, onConnect, onExport }) {
+function DrivePanel({ run, folders, connected, loading, exporting, onRefresh, onConnect, onExport }) {
   const [selectedFolderId, setSelectedFolderId] = useState("");
 
   useEffect(() => {
@@ -609,7 +609,7 @@ function DrivePanel({ run, folders, loading, exporting, onRefresh, onConnect, on
       <div className="drive-panel__header">
         <div>
           <span>Google Drive</span>
-          <strong>Enviar para uma pasta</strong>
+          <strong>Enviar para um perfil</strong>
         </div>
         <button className="action-button quiet-action" type="button" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
@@ -630,7 +630,7 @@ function DrivePanel({ run, folders, loading, exporting, onRefresh, onConnect, on
       {folders.length ? (
         <>
           <label className="input-group">
-            <span>Pasta do Drive</span>
+            <span>Pasta em tiktokapp</span>
             <select value={selectedFolderId} onChange={(event) => setSelectedFolderId(event.target.value)}>
               {folders.map((folder) => (
                 <option value={folder.id} key={folder.id}>
@@ -641,9 +641,17 @@ function DrivePanel({ run, folders, loading, exporting, onRefresh, onConnect, on
           </label>
           <button className="action-button main-action" type="button" onClick={() => onExport(selectedFolderId)} disabled={exporting || !selectedFolderId}>
             {exporting ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-            Enviar para o Drive
+            Criar post no perfil
           </button>
         </>
+      ) : connected ? (
+        <div className="empty-publish">
+          <p>Drive conectado, mas não encontrei as pastas Perfil 1, Perfil 2 e Perfil 3 dentro de tiktokapp.</p>
+          <button className="action-button main-action" type="button" onClick={onConnect} disabled={loading}>
+            <Send size={16} />
+            Reconectar Drive
+          </button>
+        </div>
       ) : (
         <div className="empty-publish">
           <p>Conecte o Google Drive para escolher a pasta de destino.</p>
@@ -657,7 +665,7 @@ function DrivePanel({ run, folders, loading, exporting, onRefresh, onConnect, on
   );
 }
 
-function DownloadStage({ run, activeIndex, setActiveIndex, driveFolders, loadingDrive, exportingDrive, onRefreshDrive, onConnectDrive, onExportDrive }) {
+function DownloadStage({ run, activeIndex, setActiveIndex, driveFolders, driveConnected, loadingDrive, exportingDrive, onRefreshDrive, onConnectDrive, onExportDrive }) {
   const slide = run.slides[activeIndex];
   const caption = run.captionPortuguese || run.captionEnglish || "";
   const hashtags = hashtagsToText(run.hashtags);
@@ -697,6 +705,7 @@ function DownloadStage({ run, activeIndex, setActiveIndex, driveFolders, loading
           <DrivePanel
             run={run}
             folders={driveFolders}
+            connected={driveConnected}
             loading={loadingDrive}
             exporting={exportingDrive}
             onRefresh={onRefreshDrive}
@@ -761,6 +770,7 @@ export function App() {
   const [uploadingImages, setUploadingImages] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [driveFolders, setDriveFolders] = useState([]);
+  const [driveConnected, setDriveConnected] = useState(false);
   const [loadingDrive, setLoadingDrive] = useState(false);
   const [exportingDrive, setExportingDrive] = useState(false);
   const [projects, setProjects] = useState([]);
@@ -816,6 +826,7 @@ export function App() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Não consegui conectar o Google Drive.");
         setDriveFolders(data.folders || []);
+        setDriveConnected(true);
         setStatus("Google Drive conectado.");
         window.history.replaceState({}, "", "/");
       } catch (requestError) {
@@ -828,7 +839,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (authSession) loadProjects({ silent: true });
+    if (authSession) {
+      loadProjects({ silent: true });
+      loadDriveFolders({ silent: true });
+    }
   }, [authSession]);
 
 
@@ -1110,8 +1124,11 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui carregar as pastas do Drive.");
       setDriveFolders(data.folders || []);
+      setDriveConnected(Boolean(data.connected || data.folders));
       if (!silent) setStatus(data.folders?.length ? "Pastas do Drive carregadas." : "Drive conectado, mas sem pastas encontradas.");
     } catch (requestError) {
+      setDriveConnected(false);
+      setDriveFolders([]);
       if (!silent) setError(requestError.message);
     } finally {
       setLoadingDrive(false);
@@ -1236,6 +1253,7 @@ export function App() {
             activeIndex={previewIndex}
             setActiveIndex={setPreviewIndex}
             driveFolders={driveFolders}
+            driveConnected={driveConnected}
             loadingDrive={loadingDrive}
             exportingDrive={exportingDrive}
             onRefreshDrive={loadDriveFolders}
