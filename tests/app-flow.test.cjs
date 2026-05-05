@@ -21,7 +21,6 @@ async function makeImage(color) {
 describe("app flow", () => {
   let rootDir;
   let app;
-  let authHeader;
 
   beforeEach(async () => {
     rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "tt-app-"));
@@ -29,19 +28,7 @@ describe("app flow", () => {
 
     app = createApp({
       rootDir,
-      auth: {
-        requireAuth(req, res, next) {
-          if (req.headers.authorization === "Bearer test-token") {
-            req.auth = {
-              token: "test-token",
-              user: { id: "andre09azevedo@gmail.com", email: "andre09azevedo@gmail.com", role: "admin" },
-            };
-            next();
-            return;
-          }
-          res.status(401).json({ error: "Sessão inválida. Faça login novamente." });
-        },
-      },
+      publishStoreConfig: { disableSupabase: true },
       services: {
         captureSlidesViaSnapTik: async (_url, slidesDir) => {
           await fs.mkdir(slidesDir, { recursive: true });
@@ -88,21 +75,29 @@ describe("app flow", () => {
           caption: "This changed my routine",
           hashtags: ["#fitness", "#habits"],
         }),
-        translateTexts: async ({ texts, from, to }) => texts.map((text) => `[${from}->${to}] ${text}`),
+        translateTexts: async ({ texts, from, to }) =>
+          texts.map((text) => `[${from}->${to}] ${text}`),
+        postiz: {
+          listTikTokAccounts: async () => [
+            { id: "tt-1", provider: "tiktok", name: "Account One", handle: "one", picture: "", disabled: false },
+            { id: "tt-2", provider: "tiktok", name: "Account Two", handle: "two", picture: "", disabled: false },
+          ],
+          createTikTokDraft: async ({ accountId }) => ({
+            uploads: [{ id: "media-1", path: "https://cdn.test/slide.jpg" }],
+            posts: [{ postId: `post-${accountId}`, integration: accountId }],
+          }),
+        },
       },
     });
-    authHeader = { Authorization: "Bearer test-token" };
   });
 
-  it("extracts, saves review, renders and persists Drive delivery metadata", async () => {
+  it("extracts, saves review, renders and exports zip", async () => {
     const extract = await request(app)
       .post("/api/extract")
-      .set(authHeader)
       .send({ url: "https://www.tiktok.com/@foo/photo/1234567890123456789" })
       .expect(200);
 
     expect(extract.body.stage).toBe("review");
-    expect(extract.body.projectName).toContain("This changed my routine");
     expect(extract.body.captionEnglish).toBe("This changed my routine");
     expect(extract.body.hashtags).toEqual(["#fitness", "#habits"]);
     expect(extract.body.slides[0].ocrPortuguese).toContain("[en->pt]");
@@ -111,7 +106,6 @@ describe("app flow", () => {
 
     const review = await request(app)
       .put(`/api/runs/${runId}/review`)
-      .set(authHeader)
       .send({
         captionEnglish: "Updated caption #fitness #daily",
         captionPortuguese: "Legenda atualizada",
@@ -128,132 +122,41 @@ describe("app flow", () => {
 
     const upload = await request(app)
       .post(`/api/runs/${runId}/replacements`)
-      .set(authHeader)
       .attach("images", await makeImage("#221144"), "a.jpg")
       .attach("images", await makeImage("#114422"), "b.jpg")
       .expect(200);
 
     expect(upload.body.stage).toBe("render");
+    expect(upload.body.slides[0].replacementImageUrl).toContain("/uploads/");
 
-    const meta = await request(app)
-      .put(`/api/runs/${runId}/meta`)
-      .set(authHeader)
-      .send({ projectName: "Projeto Shape 01" })
-      .expect(200);
-
-    expect(meta.body.projectName).toBe("Projeto Shape 01");
-
-    const render = await request(app).post(`/api/runs/${runId}/render`).set(authHeader).expect(200);
+    const render = await request(app).post(`/api/runs/${runId}/render`).expect(200);
     expect(render.body.stage).toBe("preview");
     expect(render.body.slides[0].renderedImageUrl).toContain("/rendered/");
-    expect(render.body.slides[0].textLayers?.length).toBeGreaterThan(0);
 
-    const driveTarget = await request(app)
-      .put(`/api/runs/${runId}/drive-target`)
-      .set(authHeader)
+    const zip = await request(app).get(`/api/runs/${runId}/export.zip`).expect(200);
+    expect(zip.headers["content-type"]).toContain("application/zip");
+    expect(Number(zip.headers["content-length"] || 0)).toBeGreaterThan(2000);
+
+    const accounts = await request(app).get("/api/postiz/accounts").expect(200);
+    expect(accounts.body.accounts).toHaveLength(2);
+
+    const queue = await request(app)
+      .post(`/api/runs/${runId}/postiz/queue`)
       .send({
-        folderId: "perfil-2-id",
-        folderName: "perfil 2",
-      })
-      .expect(200);
-
-    expect(driveTarget.body.stage).toBe("publish");
-    expect(driveTarget.body.driveTarget).toMatchObject({
-      folderId: "perfil-2-id",
-      folderName: "perfil 2",
-    });
-
-    const driveExport = await request(app)
-      .put(`/api/runs/${runId}/drive-export`)
-      .set(authHeader)
-      .send({
-        profileFolderId: "perfil-2-id",
-        profileFolderName: "perfil 2",
-        postFolderId: "post-folder-id",
-        postFolderName: "post 1",
-        postFolderUrl: "https://drive.google.com/drive/folders/post-folder-id",
-        files: [
-          { id: "file-1", name: "slide-01.jpg", mimeType: "image/jpeg", webViewLink: "https://drive.google.com/file/d/file-1/view" },
-          { id: "file-2", name: "caption.txt", mimeType: "text/plain", webViewLink: "https://drive.google.com/file/d/file-2/view" },
+        destinations: [
+          { accountId: "tt-1", accountName: "Account One", accountHandle: "one" },
+          { accountId: "tt-2", accountName: "Account Two", accountHandle: "two" },
         ],
       })
       .expect(200);
 
-    expect(driveExport.body.driveExport).toMatchObject({
-      profileFolderId: "perfil-2-id",
-      postFolderId: "post-folder-id",
-      postFolderName: "post 1",
-    });
-    expect(driveExport.body.driveExport.files).toHaveLength(2);
+    expect(queue.body.run.stage).toBe("publish");
+    expect(queue.body.destinations.map((destination) => destination.status)).toEqual([
+      "waiting_manual_publish",
+      "waiting_manual_publish",
+    ]);
 
-    const reopened = await request(app).get(`/api/runs/${runId}`).set(authHeader).expect(200);
-    expect(reopened.body.driveTarget.folderName).toBe("perfil 2");
-    expect(reopened.body.driveExport.postFolderName).toBe("post 1");
-    expect(reopened.body.projectName).toBe("Projeto Shape 01");
-
-    const projects = await request(app).get("/api/projects").set(authHeader).expect(200);
-    expect(projects.body.items[0]).toMatchObject({
-      runId,
-      projectName: "Projeto Shape 01",
-      slideCount: 2,
-      stage: "publish",
-    });
-
-    await request(app).delete(`/api/runs/${runId}`).set(authHeader).expect(200);
-    await request(app).get(`/api/runs/${runId}`).set(authHeader).expect(404);
-  });
-
-  it("uses TikTok direct capture when SnapTik is unavailable", async () => {
-    const fallbackRoot = await fs.mkdtemp(path.join(os.tmpdir(), "tt-app-fallback-"));
-    const fallbackImage = await makeImage("#111111");
-    const fallbackApp = createApp({
-      rootDir: fallbackRoot,
-      auth: {
-        requireAuth(req, res, next) {
-          req.auth = {
-            token: "test-token",
-            user: { id: "andre09azevedo@gmail.com", email: "andre09azevedo@gmail.com", role: "admin" },
-          };
-          next();
-        },
-      },
-      services: {
-        captureSlidesViaSnapTik: async () => {
-          throw new Error("SnapTik timeout");
-        },
-        captureSlidesDirectly: async ({ slidesDir }) => {
-          await fs.mkdir(slidesDir, { recursive: true });
-          const slidePath = path.join(slidesDir, "slide-01.jpg");
-          await fs.writeFile(slidePath, fallbackImage);
-          return [slidePath];
-        },
-        runOcr: async (_paths, runId) => [
-          {
-            index: 1,
-            sourceImagePath: path.join(fallbackRoot, "runs", runId, "slides", "slide-01.jpg"),
-            sourceImageUrl: `/runs/${runId}/slides/slide-01.jpg`,
-            ocrEnglish: "Fallback text",
-            reviewedEnglish: "Fallback text",
-            confidence: 90,
-            status: "ocr-complete",
-            replacementImagePath: "",
-            replacementImageUrl: "",
-            renderedImagePath: "",
-            renderedImageUrl: "",
-          },
-        ],
-        extractCaptionAndHashtags: async () => ({ caption: "", hashtags: [] }),
-        translateTexts: async ({ texts }) => texts,
-      },
-    });
-
-    const extract = await request(fallbackApp)
-      .post("/api/extract")
-      .set(authHeader)
-      .send({ url: "https://www.tiktok.com/@foo/photo/1234567890123456789" })
-      .expect(200);
-
-    expect(extract.body.provider).toBe("tiktok-direct");
-    expect(extract.body.slides).toHaveLength(1);
+    const history = await request(app).get("/api/history").expect(200);
+    expect(history.body.items[0].destinations).toHaveLength(2);
   });
 });

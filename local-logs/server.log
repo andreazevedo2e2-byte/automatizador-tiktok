@@ -1,0 +1,6 @@
+
+> automatizador-tiktok@1.0.0 dev:server
+> node server/server.cjs
+
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+Automatizador API running on http://0.0.0.0:4141

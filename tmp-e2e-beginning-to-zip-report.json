@@ -1,0 +1,85 @@
+{
+  "startedAt": "2026-05-01T09:57:17.365Z",
+  "sourceUrl": "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010",
+  "extract": {
+    "runId": "2026-05-01T09-57-17-443Z",
+    "stage": "review",
+    "slides": 12,
+    "hashtags": [
+      "#fitnessmotivaton",
+      "#gymworkout",
+      "#GymTok",
+      "#musclegrowth",
+      "#GymTips"
+    ],
+    "firstOcrPt": "10 coisas que eu gostaria de saber\ncomo um iniciante",
+    "secondOcrPt": "2026\n2022"
+  },
+  "reconcile": {
+    "slide1English": "complete test passed on slide one",
+    "slide2English": "second caption changed to validate the zip"
+  },
+  "review": {
+    "stage": "images",
+    "slide1English": "complete test passed on slide one",
+    "slide2English": "second caption changed to validate the zip"
+  },
+  "replacements": {
+    "count": 12,
+    "sampleAspects": [
+      "1000x1000",
+      "900x1600",
+      "1600x900"
+    ]
+  },
+  "upload": {
+    "stage": "render",
+    "replacementUrls": [
+      "/runs/2026-05-01T09-57-17-443Z/uploads/replacement-01.jpg",
+      "/runs/2026-05-01T09-57-17-443Z/uploads/replacement-02.jpg"
+    ]
+  },
+  "render": {
+    "stage": "preview",
+    "renderedUrls": [
+      "/runs/2026-05-01T09-57-17-443Z/rendered/slide-01.jpg",
+      "/runs/2026-05-01T09-57-17-443Z/rendered/slide-02.jpg"
+    ]
+  },
+  "zip": {
+    "bytes": 741723,
+    "path": "C:\\Users\\andre\\Documents\\Codex\\2026-04-29\\codex-primeiro-eu-quero-que-voc\\automatizador-tiktok\\tmp-e2e-beginning-to-zip.zip",
+    "entries": [
+      "caption.txt",
+      "hashtags.txt",
+      "post.json",
+      "slides/",
+      "slides/slide-01.jpg",
+      "slides/slide-02.jpg",
+      "slides/slide-03.jpg",
+      "slides/slide-04.jpg",
+      "slides/slide-05.jpg",
+      "slides/slide-06.jpg",
+      "slides/slide-07.jpg",
+      "slides/slide-08.jpg",
+      "slides/slide-09.jpg",
+      "slides/slide-10.jpg",
+      "slides/slide-11.jpg",
+      "slides/slide-12.jpg"
+    ]
+  },
+  "finalRun": {
+    "stage": "preview",
+    "slide1English": "complete test passed on slide one",
+    "slide1Portuguese": "teste completo aprovado no slide um",
+    "slide1Position": "bottom",
+    "slide2English": "second caption changed to validate the zip",
+    "slide2Portuguese": "segunda legenda alterada para validar o zip",
+    "slide2Position": "center"
+  },
+  "inspectImages": {
+    "slide1": "C:\\Users\\andre\\Documents\\Codex\\2026-04-29\\codex-primeiro-eu-quero-que-voc\\automatizador-tiktok\\tmp-e2e-rendered-slide-01.jpg",
+    "slide2": "C:\\Users\\andre\\Documents\\Codex\\2026-04-29\\codex-primeiro-eu-quero-que-voc\\automatizador-tiktok\\tmp-e2e-rendered-slide-02.jpg"
+  },
+  "completedAt": "2026-05-01T09:59:11.721Z"
+}

@@ -3,8 +3,7 @@ FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=80
-ENV EXTRA_PORT=4141
+ENV PORT=4141
 ENV HOST=0.0.0.0
 ENV HEADLESS=false
 ENV DISPLAY=:99
@@ -28,7 +27,6 @@ COPY . .
 
 RUN chmod +x /app/docker/start.sh
 
-EXPOSE 80
 EXPOSE 4141
 EXPOSE 6080
 

@@ -6,7 +6,5 @@ browser-profile
 .vercel
 ocr-models
 tmp-ocr-test
-local-logs
-tmp-*
 
 .vercel

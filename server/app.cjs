@@ -7,12 +7,21 @@ const path = require("node:path");
 const multer = require("multer");
 const JSZip = require("jszip");
 
-const { compositeSlide, createDefaultLayer, normalizeLayer } = require("./lib/compositor.cjs");
+const { compositeSlide } = require("./lib/compositor.cjs");
 const { createOcrRunner } = require("./lib/ocr.cjs");
+const {
+  buildPostizAuthorizeUrl,
+  createPostizClient,
+  exchangePostizOAuthCode,
+  randomOAuthState,
+} = require("./lib/postiz-client.cjs");
+const { createPostizTokenStore } = require("./lib/postiz-token-store.cjs");
+const { createPublishStore, normalizeDestination, normalizePostStatus } = require("./lib/publish-store.cjs");
 const { createRunStore } = require("./lib/run-store.cjs");
 const {
   buildCaptionEnglish,
   buildTranslatedSlides,
+  getSlidePosition,
   normalizeHashtags,
   normalizeTikTokUrl,
   splitHashtags,
@@ -24,14 +33,11 @@ const {
   extractCaptionAndHashtags,
   launchPersistentContext,
 } = require("./lib/tiktok.cjs");
-const { createSupabaseAuth } = require("./lib/supabase-auth.cjs");
 const { translateTexts } = require("./lib/translate.cjs");
 
 function buildRunResponse(run) {
   return {
     runId: run.runId,
-    ownerId: run.ownerId || "",
-    projectName: run.projectName || "",
     sourceUrl: run.sourceUrl,
     provider: run.provider,
     stage: run.stage,
@@ -39,117 +45,28 @@ function buildRunResponse(run) {
     captionPortuguese: run.captionPortuguese,
     hashtags: run.hashtags || [],
     export: run.export || null,
-    driveTarget: run.driveTarget || null,
-    driveExport: run.driveExport || null,
+    destinations: run.destinations || [],
     slides: run.slides,
   };
-}
-
-function normalizeProjectName(value, fallback) {
-  const normalized = String(value || "").trim();
-  if (normalized) return normalized.slice(0, 120);
-  return String(fallback || "Novo projeto").trim().slice(0, 120) || "Novo projeto";
-}
-
-function buildSlideLayers(slide) {
-  const fallbackText = slide.reviewedEnglish || slide.ocrEnglish || "";
-  const fallbackLayer = createDefaultLayer({ text: fallbackText, position: "center" });
-  if (!Array.isArray(slide.textLayers) || !slide.textLayers.length) {
-    return [fallbackLayer];
-  }
-  return slide.textLayers.map((layer) =>
-    normalizeLayer(
-      {
-        ...layer,
-        align: "center",
-        x: 540,
-        y: 960,
-      },
-      { ...fallbackLayer, y: 960 }
-    )
-  );
-}
-
-function normalizeDriveTarget(input = {}) {
-  const folderId = String(input.folderId || "").trim();
-  const folderName = String(input.folderName || "").trim();
-  if (!folderId || !folderName) {
-    throw new Error("Escolha uma pasta válida do Google Drive.");
-  }
-  return {
-    folderId,
-    folderName,
-    savedAt: new Date().toISOString(),
-  };
-}
-
-function normalizeDriveExport(input = {}) {
-  const profileFolderId = String(input.profileFolderId || "").trim();
-  const profileFolderName = String(input.profileFolderName || "").trim();
-  const postFolderId = String(input.postFolderId || "").trim();
-  const postFolderName = String(input.postFolderName || "").trim();
-  const files = Array.isArray(input.files)
-    ? input.files
-        .map((file) => ({
-          id: String(file.id || "").trim(),
-          name: String(file.name || "").trim(),
-          mimeType: String(file.mimeType || "").trim(),
-          webViewLink: String(file.webViewLink || "").trim(),
-          webContentLink: String(file.webContentLink || "").trim(),
-        }))
-        .filter((file) => file.id && file.name)
-    : [];
-
-  if (!profileFolderId || !profileFolderName || !postFolderId || !postFolderName) {
-    throw new Error("O envio para o Google Drive voltou incompleto.");
-  }
-
-  return {
-    profileFolderId,
-    profileFolderName,
-    postFolderId,
-    postFolderName,
-    postFolderUrl: String(input.postFolderUrl || `https://drive.google.com/drive/folders/${postFolderId}`).trim(),
-    files,
-    exportedAt: new Date().toISOString(),
-  };
-}
-
-function getOwnerKeys(user = {}) {
-  return [String(user.id || "").trim(), String(user.email || "").trim()].filter(Boolean);
-}
-
-function withTimeout(promise, timeoutMs, message) {
-  let timeout = null;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
 }
 
 function createApp(config = {}) {
   const app = express();
   const rootDir = config.rootDir || path.resolve(__dirname, "..");
   const store = config.store || createRunStore(rootDir);
+  const publishStore = config.publishStore || createPublishStore(config.publishStoreConfig);
+  const postizTokenStore = config.postizTokenStore || createPostizTokenStore(rootDir);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
   const port = Number(process.env.PORT || 4141);
   const host = process.env.HOST || "0.0.0.0";
   const profileDir = path.join(rootDir, "browser-profile");
   const isHeadless = String(process.env.HEADLESS || "false").toLowerCase() === "true";
   const remoteLoginUrl = (process.env.REMOTE_LOGIN_URL || "").trim();
-  const allowDirectFallback = String(process.env.ALLOW_TIKTOK_DIRECT_FALLBACK || "true").toLowerCase() !== "false";
+  const allowDirectFallback = String(process.env.ALLOW_TIKTOK_DIRECT_FALLBACK || "false").toLowerCase() === "true";
   const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
-  const isLocalDevOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
-  const isVercelOrigin = (origin) => {
-    try {
-      return new URL(origin).hostname.endsWith(".vercel.app");
-    } catch {
-      return false;
-    }
-  };
 
   const services = {
     extractCaptionAndHashtags,
@@ -157,6 +74,7 @@ function createApp(config = {}) {
     captureSlidesViaSnapTik,
     translateTexts,
     runOcr: createOcrRunner(rootDir),
+    postiz: createPostizClient({ tokenStore: postizTokenStore, ...config.postizConfig }),
     ...config.services,
   };
 
@@ -165,16 +83,13 @@ function createApp(config = {}) {
     profileDir,
     isHeadless,
   };
-  const auth = config.auth || createSupabaseAuth(config.supabase || {});
 
   app.use(
     cors({
       origin(origin, callback) {
         if (!origin) return callback(null, true);
-        if (!allowedOrigins.length || allowedOrigins.includes(origin) || isLocalDevOrigin(origin) || isVercelOrigin(origin)) {
-          return callback(null, true);
-        }
-        return callback(null, false);
+        if (!allowedOrigins.length || allowedOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("CORS blocked for this origin."));
       },
     })
   );
@@ -182,40 +97,80 @@ function createApp(config = {}) {
   app.use("/runs", express.static(store.runsDir));
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, mode: "preview-and-drive", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
+    res.json({ ok: true, mode: "preview-and-zip", headless: isHeadless, remoteLoginUrl, allowDirectFallback });
   });
 
-  app.get("/api/auth/session", auth.requireAuth, (req, res) => {
-    res.json({ user: req.auth.user });
-  });
-
-  app.get("/api/projects", auth.requireAuth, async (req, res) => {
+  app.get("/api/history", async (_req, res) => {
     try {
-      res.json({ items: await store.listRuns(getOwnerKeys(req.auth.user)) });
+      res.json({ items: await publishStore.listHistory() });
     } catch (error) {
-      res.status(400).json({ error: error.message || "Could not load projects." });
+      res.status(400).json({ error: error.message || "Could not load history." });
     }
   });
 
-  app.get("/api/runs/:runId", auth.requireAuth, async (req, res) => {
+  app.get("/api/postiz/health", async (_req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
+      const accounts = await services.postiz.listTikTokAccounts();
+      res.json({ ok: true, accounts });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message || "Postiz is not configured." });
+    }
+  });
+
+  app.get("/api/postiz/accounts", async (_req, res) => {
+    try {
+      res.json({ accounts: await services.postiz.listTikTokAccounts() });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not list Postiz accounts." });
+    }
+  });
+
+  app.get("/api/postiz/oauth/start", async (_req, res) => {
+    try {
+      const state = randomOAuthState();
+      await postizTokenStore.saveState(state);
+      res.json({
+        authorizeUrl: buildPostizAuthorizeUrl({
+          frontendUrl: process.env.POSTIZ_FRONTEND_URL || "https://platform.postiz.com",
+          clientId: process.env.POSTIZ_CLIENT_ID,
+          state,
+        }),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not start Postiz OAuth." });
+    }
+  });
+
+  app.post("/api/postiz/oauth/callback", async (req, res) => {
+    try {
+      const { code, state, error } = req.body || {};
+      if (error) throw new Error(`Postiz authorization denied: ${error}`);
+      const validState = await postizTokenStore.consumeState(state);
+      if (!validState) throw new Error("Postiz OAuth state inválido. Inicie a conexão novamente.");
+
+      const token = await exchangePostizOAuthCode({
+        apiUrl: process.env.POSTIZ_API_URL || process.env.POSTIZ_URL || "https://api.postiz.com",
+        clientId: process.env.POSTIZ_CLIENT_ID,
+        clientSecret: process.env.POSTIZ_CLIENT_SECRET,
+        code,
+      });
+      await postizTokenStore.saveToken(token);
+      res.json({ ok: true, accounts: await services.postiz.listTikTokAccounts() });
+    } catch (callbackError) {
+      res.status(400).json({ error: callbackError.message || "Could not complete Postiz OAuth." });
+    }
+  });
+
+  app.get("/api/runs/:runId", async (req, res) => {
+    try {
+      const run = await store.loadRun(req.params.runId);
       res.json(buildRunResponse(run));
     } catch {
       res.status(404).json({ error: "Run not found." });
     }
   });
 
-  app.delete("/api/runs/:runId", auth.requireAuth, async (req, res) => {
-    try {
-      await store.deleteRun(req.params.runId, getOwnerKeys(req.auth.user));
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not delete run." });
-    }
-  });
-
-  app.post("/api/open-login", auth.requireAuth, async (_req, res) => {
+  app.post("/api/open-login", async (_req, res) => {
     try {
       if (!sharedBrowserContext.current) {
         sharedBrowserContext.current = await launchPersistentContext(profileDir, isHeadless);
@@ -237,7 +192,7 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/translate", auth.requireAuth, async (req, res) => {
+  app.post("/api/translate", async (req, res) => {
     try {
       const { texts = [], from = "en", to = "pt" } = req.body || {};
       const translated = await services.translateTexts({ texts, from, to });
@@ -247,7 +202,7 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/extract", auth.requireAuth, async (req, res) => {
+  app.post("/api/extract", async (req, res) => {
     try {
       const sourceUrl = normalizeTikTokUrl(req.body.url);
       const runId = timestamp();
@@ -256,12 +211,10 @@ function createApp(config = {}) {
       let slidePaths = [];
       let provider = "snaptik";
       try {
-        slidePaths = await withTimeout(
-          services.captureSlidesViaSnapTik(sourceUrl, store.getSlidesDir(runId)),
-          90000,
-          "SnapTik demorou demais para responder."
-        );
+        slidePaths = await services.captureSlidesViaSnapTik(sourceUrl, store.getSlidesDir(runId));
       } catch (snapTikError) {
+        console.error("[extract] SnapTik failed", snapTikError);
+
         if (!allowDirectFallback) {
           throw new Error(
             `A extração automática via SnapTik falhou. ${snapTikError?.message || "Tente novamente ou use OCR via imagens."}`
@@ -269,15 +222,19 @@ function createApp(config = {}) {
         }
 
         provider = "tiktok-direct";
-        slidePaths = await withTimeout(
-          services.captureSlidesDirectly({
+
+        try {
+          slidePaths = await services.captureSlidesDirectly({
             sourceUrl,
             slidesDir: store.getSlidesDir(runId),
             sharedBrowserContext,
-          }),
-          90000,
-          `SnapTik falhou e o fallback direto também demorou demais. ${snapTikError?.message || ""}`.trim()
-        );
+          });
+        } catch (directError) {
+          console.error("[extract] TikTok direct fallback failed", directError);
+          throw new Error(
+            `SnapTik falhou (${snapTikError?.message || "sem detalhe"}) e o fallback direto do TikTok também falhou (${directError?.message || "sem detalhe"}).`
+          );
+        }
       }
 
       const slides = await services.runOcr(slidePaths, runId);
@@ -294,12 +251,8 @@ function createApp(config = {}) {
         ? await services.translateTexts({ texts: [captionEnglish], from: "en", to: "pt" })
         : [""];
 
-      const defaultProjectName = normalizeProjectName(req.body?.projectName, captionPortuguese || captionEnglish || sourceUrl);
       const run = {
         runId,
-        ownerId: req.auth.user.id,
-        ownerEmail: req.auth.user.email || "",
-        projectName: defaultProjectName,
         sourceUrl,
         provider,
         stage: "review",
@@ -307,19 +260,19 @@ function createApp(config = {}) {
         captionPortuguese,
         hashtags: normalizeHashtags([...splitHashtags(captionEnglish), ...extractedHashtags]),
         export: null,
-        driveTarget: null,
-        driveExport: null,
         slides: localizedSlides,
       };
 
       await store.saveRun(run);
+      await publishStore.upsertRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
+      console.error("[extract] request failed", error);
       res.status(400).json({ error: error.message || "Extraction failed." });
     }
   });
 
-  app.post("/api/ocr-upload", auth.requireAuth, upload.array("slides", 30), async (req, res) => {
+  app.post("/api/ocr-upload", upload.array("slides", 30), async (req, res) => {
     try {
       const files = Array.isArray(req.files) ? req.files : [];
       if (!files.length) throw new Error("Upload at least one slide image.");
@@ -344,9 +297,6 @@ function createApp(config = {}) {
 
       const run = {
         runId,
-        ownerId: req.auth.user.id,
-        ownerEmail: req.auth.user.email || "",
-        projectName: normalizeProjectName(req.body?.projectName, "Novo projeto por imagens"),
         sourceUrl: "local-upload",
         provider: "upload",
         stage: "review",
@@ -354,36 +304,21 @@ function createApp(config = {}) {
         captionPortuguese: "",
         hashtags: [],
         export: null,
-        driveTarget: null,
-        driveExport: null,
         slides: buildTranslatedSlides(slides, slideTranslations),
       };
 
       await store.saveRun(run);
+      await publishStore.upsertRun(run);
       res.json(buildRunResponse(run));
     } catch (error) {
       res.status(400).json({ error: error.message || "Upload OCR failed." });
     }
   });
 
-  app.put("/api/runs/:runId/meta", auth.requireAuth, async (req, res) => {
-    try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
-      const nextRun = {
-        ...run,
-        projectName: normalizeProjectName(req.body?.projectName, run.projectName || run.captionPortuguese || run.captionEnglish || run.sourceUrl),
-      };
-      await store.saveRun(nextRun);
-      res.json(buildRunResponse(nextRun));
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not save project metadata." });
-    }
-  });
-
-  app.put("/api/runs/:runId/review", auth.requireAuth, async (req, res) => {
+  app.put("/api/runs/:runId/review", async (req, res) => {
     try {
       const { slides = [], captionEnglish = "", captionPortuguese = "", hashtags = [] } = req.body || {};
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
+      const run = await store.loadRun(req.params.runId);
       const slideMap = new Map(slides.map((slide) => [Number(slide.index), slide]));
 
       const nextSlides = run.slides.map((slide) => {
@@ -407,13 +342,14 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not save review." });
     }
   });
 
-  app.post("/api/runs/:runId/reconcile-review", auth.requireAuth, async (req, res) => {
+  app.post("/api/runs/:runId/reconcile-review", async (req, res) => {
     try {
       const { slides = [], captionPortuguese = "" } = req.body || {};
       const slideTexts = slides.map((slide) => String(slide.reviewedPortuguese || ""));
@@ -434,9 +370,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.post("/api/runs/:runId/replacements", auth.requireAuth, upload.array("images", 30), async (req, res) => {
+  app.post("/api/runs/:runId/replacements", upload.array("images", 30), async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
+      const run = await store.loadRun(req.params.runId);
       const files = Array.isArray(req.files) ? req.files : [];
       if (!files.length) throw new Error("Upload at least one replacement image.");
       if (files.length !== run.slides.length) {
@@ -459,47 +395,16 @@ function createApp(config = {}) {
 
       const nextRun = { ...run, stage: "render", slides: nextSlides };
       await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not upload replacement images." });
     }
   });
 
-  app.post("/api/runs/:runId/slides/:index/replacement", auth.requireAuth, upload.single("image"), async (req, res) => {
+  app.post("/api/runs/:runId/render", async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
-      const slideIndex = Number(req.params.index);
-      if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
-      const slide = run.slides.find((entry) => entry.index === slideIndex);
-      if (!slide) throw new Error("Slide não encontrado.");
-      if (!req.file) throw new Error("Envie uma imagem para trocar o fundo.");
-
-      const extension = path.extname(req.file.originalname || "") || ".jpg";
-      const uploadPath = path.join(store.getUploadsDir(run.runId), `replacement-${String(slideIndex).padStart(2, "0")}${extension}`);
-      await fs.writeFile(uploadPath, req.file.buffer);
-
-      const nextSlides = run.slides.map((entry) =>
-        entry.index === slideIndex
-          ? {
-              ...entry,
-              replacementImagePath: uploadPath,
-              replacementImageUrl: `/runs/${run.runId}/uploads/${path.basename(uploadPath)}`,
-              status: "image-ready",
-            }
-          : entry
-      );
-
-      const nextRun = { ...run, slides: nextSlides };
-      await store.saveRun(nextRun);
-      res.json(buildRunResponse(nextRun));
-    } catch (error) {
-      res.status(400).json({ error: error.message || "Could not replace slide background." });
-    }
-  });
-
-  app.post("/api/runs/:runId/render", auth.requireAuth, async (req, res) => {
-    try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
+      const run = await store.loadRun(req.params.runId);
       const missingImage = run.slides.find((slide) => !slide.replacementImagePath);
       if (missingImage) {
         throw new Error("Upload all replacement images before rendering.");
@@ -509,18 +414,15 @@ function createApp(config = {}) {
       for (const [index, slide] of run.slides.entries()) {
         const imageBuffer = await fs.readFile(slide.replacementImagePath);
         const outputPath = path.join(store.getRenderedDir(run.runId), `slide-${String(index + 1).padStart(2, "0")}.jpg`);
-        const textLayers = buildSlideLayers(slide);
         await compositeSlide({
           imageBuffer,
           text: slide.reviewedEnglish || slide.ocrEnglish,
           outputPath,
-          position: "center",
-          textLayers,
+          position: slide.preferredPosition || getSlidePosition(index, run.slides.length),
         });
 
         nextSlides.push({
           ...slide,
-          textLayers,
           renderedImagePath: outputPath,
           renderedImageUrl: `/runs/${run.runId}/rendered/${path.basename(outputPath)}`,
           status: "rendered",
@@ -538,83 +440,144 @@ function createApp(config = {}) {
       };
 
       await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
       res.status(400).json({ error: error.message || "Render failed." });
     }
   });
 
-  app.put("/api/runs/:runId/slides/:index/layers", auth.requireAuth, async (req, res) => {
+  app.post("/api/runs/:runId/destinations", async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
-      const slideIndex = Number(req.params.index);
-      if (!Number.isInteger(slideIndex) || slideIndex < 1) throw new Error("Slide inválido.");
-      const layers = Array.isArray(req.body?.layers) ? req.body.layers : [];
-      if (!layers.length) throw new Error("Envie pelo menos uma camada de texto.");
+      const run = await store.loadRun(req.params.runId);
+      const destinations = (req.body.destinations || [])
+        .map((destination) => normalizeDestination(run.runId, destination))
+        .filter((destination) => destination.accountId);
+      if (!destinations.length) throw new Error("Escolha pelo menos uma conta TikTok.");
 
-      const nextSlides = run.slides.map((slide) => {
-        if (slide.index !== slideIndex) return slide;
-        const normalized = buildSlideLayers({ ...slide, textLayers: layers });
-        return {
-          ...slide,
-          textLayers: normalized,
-          status: slide.renderedImagePath ? "render-ready" : slide.status,
-        };
+      const nextRun = {
+        ...run,
+        stage: "publish",
+        destinations,
+      };
+      await store.saveRun(nextRun);
+      await publishStore.upsertRun(nextRun);
+      await publishStore.saveDestinations(run.runId, destinations);
+      await publishStore.recordEvent({
+        runId: run.runId,
+        type: "destinations_saved",
+        message: `${destinations.length} destino(s) selecionado(s).`,
+        details: { destinations },
       });
-
-      const nextRun = {
-        ...run,
-        stage: run.stage === "publish" ? "preview" : run.stage,
-        slides: nextSlides,
-      };
-
-      await store.saveRun(nextRun);
       res.json(buildRunResponse(nextRun));
     } catch (error) {
-      res.status(400).json({ error: error.message || "Could not save text layers." });
+      res.status(400).json({ error: error.message || "Could not save destinations." });
     }
   });
 
-  app.put("/api/runs/:runId/drive-target", auth.requireAuth, async (req, res) => {
+  app.post("/api/runs/:runId/postiz/queue", async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
-      const driveTarget = normalizeDriveTarget(req.body || {});
+      const run = await store.loadRun(req.params.runId);
+      if (!run.slides.every((slide) => slide.renderedImagePath)) {
+        throw new Error("Gere o slideshow antes de enviar ao Postiz.");
+      }
+
+      const requestedDestinations = Array.isArray(req.body.destinations) && req.body.destinations.length
+        ? req.body.destinations
+        : run.destinations || [];
+      const destinations = requestedDestinations
+        .map((destination) => normalizeDestination(run.runId, destination))
+        .filter((destination) => destination.accountId);
+      if (!destinations.length) throw new Error("Escolha pelo menos uma conta TikTok.");
+
+      await publishStore.saveDestinations(run.runId, destinations);
+      const caption = [run.captionEnglish, ...(run.hashtags || [])].filter(Boolean).join(" ").trim();
+      const mediaFiles = run.slides.map((slide) => ({ filePath: slide.renderedImagePath }));
+      const results = [];
+      for (const destination of destinations) {
+        try {
+          const postizResult = await services.postiz.createTikTokDraft({
+            accountId: destination.accountId,
+            caption,
+            mediaFiles,
+            scheduledAt: destination.scheduledAt,
+            tags: req.body.tags || [],
+          });
+          const postizPostId = Array.isArray(postizResult.posts) ? postizResult.posts[0]?.postId : postizResult.posts?.postId;
+          const updated = {
+            ...destination,
+            status: "waiting_manual_publish",
+            postizPostId: postizPostId || null,
+            postizResponse: postizResult.posts,
+            error: null,
+          };
+          await publishStore.updateDestination(run.runId, destination.accountId, updated);
+          await publishStore.recordEvent({
+            runId: run.runId,
+            accountId: destination.accountId,
+            type: "sent_to_postiz",
+            message: `Rascunho enviado para ${destination.accountName || destination.accountHandle || destination.accountId}.`,
+            details: { postizPostId },
+          });
+          results.push(updated);
+        } catch (error) {
+          const failed = {
+            ...destination,
+            status: "failed",
+            error: error.message || "Postiz failed.",
+          };
+          await publishStore.updateDestination(run.runId, destination.accountId, failed);
+          await publishStore.recordEvent({
+            runId: run.runId,
+            accountId: destination.accountId,
+            type: "failed",
+            message: failed.error,
+          });
+          results.push(failed);
+        }
+      }
+
       const nextRun = {
         ...run,
         stage: "publish",
-        driveTarget,
+        destinations: results.map((destination) => ({
+          ...destination,
+          status: normalizePostStatus(destination.status),
+        })),
       };
       await store.saveRun(nextRun);
-      res.json(buildRunResponse(nextRun));
+      await publishStore.upsertRun(nextRun);
+      res.json({ run: buildRunResponse(nextRun), destinations: nextRun.destinations });
     } catch (error) {
-      res.status(400).json({ error: error.message || "Could not save the Drive folder." });
+      res.status(400).json({ error: error.message || "Could not send to Postiz." });
     }
   });
 
-  app.put("/api/runs/:runId/drive-export", auth.requireAuth, async (req, res) => {
+  app.put("/api/runs/:runId/destinations/:accountId/status", async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
-      const driveExport = normalizeDriveExport(req.body || {});
-      const nextRun = {
-        ...run,
-        stage: "publish",
-        driveTarget: {
-          folderId: driveExport.profileFolderId,
-          folderName: driveExport.profileFolderName,
-          savedAt: new Date().toISOString(),
-        },
-        driveExport,
-      };
+      const run = await store.loadRun(req.params.runId);
+      const status = normalizePostStatus(req.body.status);
+      const destinations = (run.destinations || []).map((destination) =>
+        destination.accountId === req.params.accountId ? { ...destination, status, updatedAt: new Date().toISOString() } : destination
+      );
+      const nextRun = { ...run, destinations };
       await store.saveRun(nextRun);
+      await publishStore.updateDestination(run.runId, req.params.accountId, { status });
+      await publishStore.recordEvent({
+        runId: run.runId,
+        accountId: req.params.accountId,
+        type: "status_changed",
+        message: `Status alterado para ${status}.`,
+      });
       res.json(buildRunResponse(nextRun));
     } catch (error) {
-      res.status(400).json({ error: error.message || "Could not save the Drive export." });
+      res.status(400).json({ error: error.message || "Could not update status." });
     }
   });
 
-  app.get("/api/runs/:runId/slides/:index/download", auth.requireAuth, async (req, res) => {
+  app.get("/api/runs/:runId/slides/:index/download", async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
+      const run = await store.loadRun(req.params.runId);
       const slide = run.slides.find((entry) => entry.index === Number(req.params.index));
       if (!slide?.renderedImagePath) {
         throw new Error("Rendered slide not found.");
@@ -625,9 +588,9 @@ function createApp(config = {}) {
     }
   });
 
-  app.get("/api/runs/:runId/export.zip", auth.requireAuth, async (req, res) => {
+  app.get("/api/runs/:runId/export.zip", async (req, res) => {
     try {
-      const run = await store.loadRun(req.params.runId, getOwnerKeys(req.auth.user));
+      const run = await store.loadRun(req.params.runId);
       if (!run.slides.every((slide) => slide.renderedImagePath)) {
         throw new Error("Render the slideshow before downloading the ZIP.");
       }
@@ -655,6 +618,10 @@ function createApp(config = {}) {
               reviewedPortuguese: slide.reviewedPortuguese,
               renderedImageUrl: slide.renderedImageUrl,
             })),
+            postiz: {
+              caption: run.captionEnglish,
+              mediaFiles: run.slides.map((slide) => path.basename(slide.renderedImagePath)),
+            },
           },
           null,
           2
@@ -663,7 +630,7 @@ function createApp(config = {}) {
 
       const buffer = await zip.generateAsync({ type: "nodebuffer" });
       res.setHeader("Content-Type", "application/zip");
-      res.setHeader("Content-Disposition", `attachment; filename="${run.runId}.zip"`);
+      res.setHeader("Content-Disposition", `attachment; filename=\"${run.runId}.zip\"`);
       res.send(buffer);
     } catch (error) {
       res.status(400).json({ error: error.message || "ZIP export failed." });
