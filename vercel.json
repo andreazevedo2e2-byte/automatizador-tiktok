@@ -2,5 +2,8 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "rewrites": [{ "source": "/callback", "destination": "/" }]
+  "rewrites": [
+    { "source": "/callback", "destination": "/" },
+    { "source": "/google-drive/callback", "destination": "/" }
+  ]
 }
