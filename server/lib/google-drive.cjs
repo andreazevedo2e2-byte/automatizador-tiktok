@@ -10,12 +10,17 @@ const appRootFolderName = "tiktokapp";
 const profileFolderNames = ["Perfil 1", "Perfil 2", "Perfil 3"];
 
 function createGoogleDriveStore(rootDir) {
-  const tokenPath = path.join(rootDir, "google-drive-token.json");
-  const statePath = path.join(rootDir, "google-drive-state.json");
+  const tokenPath = path.join(rootDir, "runs", "google-drive-token.json");
+  const statePath = path.join(rootDir, "runs", "google-drive-state.json");
+
+  async function writeJson(filePath, payload) {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify(payload, null, 2));
+  }
 
   return {
     async saveState(state) {
-      await fs.writeFile(statePath, JSON.stringify({ state, createdAt: new Date().toISOString() }, null, 2));
+      await writeJson(statePath, { state, createdAt: new Date().toISOString() });
     },
     async consumeState(state) {
       try {
@@ -28,7 +33,7 @@ function createGoogleDriveStore(rootDir) {
     },
     async saveToken(token) {
       const current = await this.loadToken();
-      await fs.writeFile(tokenPath, JSON.stringify({ ...current, ...token, updatedAt: new Date().toISOString() }, null, 2));
+      await writeJson(tokenPath, { ...current, ...token, updatedAt: new Date().toISOString() });
     },
     async loadToken() {
       try {
