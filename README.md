@@ -33,7 +33,7 @@ Before deploy, edit:
 - `ALLOWED_ORIGINS=https://automatizador-tiktok.vercel.app`
 - `GOOGLE_CLIENT_ID=...`
 - `GOOGLE_CLIENT_SECRET=...`
-- `GOOGLE_REDIRECT_URI=https://automatizador-tiktok-six.vercel.app/google-drive/callback`
+- `GOOGLE_REDIRECT_URI=https://automatizador-tiktok.vercel.app/google-drive/callback`
 - `SUPABASE_URL=...` and `SUPABASE_SERVICE_ROLE_KEY=...` if you want persistent history.
 
 Expose port `4141` via your domain, for example:
@@ -58,8 +58,16 @@ In the deployed frontend:
 
 ## Google Drive + Supabase
 
-1. Create a Google OAuth app and add `https://automatizador-tiktok-six.vercel.app/google-drive/callback` as redirect URL.
+1. Create a Google OAuth web client and add `https://automatizador-tiktok.vercel.app/google-drive/callback` as the authorized redirect URI.
 2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in the backend.
 3. In Supabase SQL Editor, run `supabase/schema.sql`.
 4. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the backend, never in Vercel frontend env.
 5. The app creates `post 1`, `post 2`, etc. inside the selected Drive folder.
+
+## Quick Google OAuth links
+
+- Google Auth Platform: https://console.cloud.google.com/auth/overview
+- OAuth clients: https://console.cloud.google.com/auth/clients
+- Enable Google Drive API: https://console.cloud.google.com/apis/library/drive.googleapis.com
+- Production redirect URI: https://automatizador-tiktok.vercel.app/google-drive/callback
+- App Drive connect endpoint after backend env is set: https://zapspark-tiktok-extractor.te7sty.easypanel.host/api/google-drive/oauth/start
