@@ -3,11 +3,14 @@ import {
   Check,
   Clipboard,
   Download,
+  Home,
   ImagePlus,
   Loader2,
+  Pencil,
   ScanText,
   Send,
   Sparkles,
+  Trash2,
   UploadCloud,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -92,6 +95,7 @@ function stageLabel(stage) {
 }
 
 function projectTitle(project) {
+  if (project.title?.trim()) return project.title.trim();
   const caption = project.captionPortuguese || project.captionEnglish || "";
   if (caption.trim()) return caption.trim().slice(0, 72);
   try {
@@ -169,25 +173,33 @@ function LoginScreen({ email, password, setEmail, setPassword, loading, onSubmit
   );
 }
 
-function StepRail({ activeStage }) {
+function StepRail({ activeStage, run, onGoToStage, onNewProject }) {
   const activeIndex = stageIndex[activeStage] || 0;
+  const maxIndex = run ? stageIndex[getActiveStage(run)] || 0 : 0;
 
   return (
     <aside className="step-rail" aria-label="Etapas do fluxo">
-      <div className="brand-mark">
+      <button className="brand-mark" type="button" onClick={onNewProject} aria-label="Voltar para o início">
         <span>TT</span>
-      </div>
+      </button>
       <div className="step-list">
         {steps.map((step, index) => {
           const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "locked";
+          const canOpen = index <= maxIndex;
           return (
-            <div className={`rail-step ${state}`} key={step.key}>
+            <button
+              className={`rail-step ${state}`}
+              type="button"
+              key={step.key}
+              onClick={() => canOpen && onGoToStage(step.key)}
+              disabled={!canOpen}
+            >
               <div className="rail-step__number">{state === "done" ? <Check size={15} /> : step.number}</div>
               <div>
                 <strong>{step.title}</strong>
                 <span>{step.hint}</span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -195,7 +207,7 @@ function StepRail({ activeStage }) {
   );
 }
 
-function StudioHeader({ activeStage, status }) {
+function StudioHeader({ activeStage, status, onNewProject }) {
   const activeStep = steps[stageIndex[activeStage] || 0];
 
   return (
@@ -208,6 +220,10 @@ function StudioHeader({ activeStage, status }) {
         <span>{activeStep.number}</span>
         <strong>{activeStep.title}</strong>
         <small>{status}</small>
+        <button type="button" onClick={onNewProject} aria-label="Novo post">
+          <Home size={16} />
+          Novo
+        </button>
       </div>
     </header>
   );
@@ -290,7 +306,21 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
   );
 }
 
-function ProjectList({ projects, loading, onOpenProject, onRefreshProjects }) {
+function ProjectList({ projects, loading, onOpenProject, onRefreshProjects, onRenameProject, onDeleteProject }) {
+  const [editingRunId, setEditingRunId] = useState("");
+  const [draftTitle, setDraftTitle] = useState("");
+
+  function startEditing(project) {
+    setEditingRunId(project.runId);
+    setDraftTitle(project.title || projectTitle(project));
+  }
+
+  async function saveTitle(project) {
+    await onRenameProject(project, draftTitle);
+    setEditingRunId("");
+    setDraftTitle("");
+  }
+
   return (
     <div className="projects-panel">
       <div className="projects-panel__header">
@@ -306,14 +336,39 @@ function ProjectList({ projects, loading, onOpenProject, onRefreshProjects }) {
 
       {projects.length ? (
         <div className="project-grid">
-          {projects.map((project) => (
-            <button className="project-card" type="button" key={project.runId} onClick={() => onOpenProject(project)}>
-              <span>{stageLabel(project.stage)}</span>
-              <strong>{projectTitle(project)}</strong>
-              <small>{projectDate(project)}</small>
-              {project.hashtags?.length ? <em>{hashtagsToText(project.hashtags).slice(0, 90)}</em> : null}
-            </button>
-          ))}
+          {projects.map((project) => {
+            const isEditing = editingRunId === project.runId;
+            return (
+              <article className="project-card" key={project.runId}>
+                <button className="project-card__main" type="button" onClick={() => onOpenProject(project)}>
+                  <span>{stageLabel(project.stage)}</span>
+                  <strong>{projectTitle(project)}</strong>
+                  <small>{projectDate(project)}</small>
+                  {project.hashtags?.length ? <em>{hashtagsToText(project.hashtags).slice(0, 90)}</em> : null}
+                </button>
+                {isEditing ? (
+                  <div className="project-card__editor">
+                    <input value={draftTitle} onChange={(event) => setDraftTitle(event.target.value)} autoFocus maxLength={120} />
+                    <button type="button" onClick={() => saveTitle(project)}>
+                      Salvar
+                    </button>
+                    <button type="button" onClick={() => setEditingRunId("")}>
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="project-card__actions">
+                    <button type="button" onClick={() => startEditing(project)} aria-label="Renomear projeto">
+                      <Pencil size={15} />
+                    </button>
+                    <button type="button" onClick={() => onDeleteProject(project)} aria-label="Apagar projeto">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="project-empty">{loading ? "Carregando projetos..." : "Nenhum projeto salvo ainda."}</div>
@@ -334,6 +389,8 @@ function ExtractStage({
   loadingProjects,
   onOpenProject,
   onRefreshProjects,
+  onRenameProject,
+  onDeleteProject,
 }) {
   const uploadRef = useRef(null);
 
@@ -399,7 +456,14 @@ function ExtractStage({
         <span>Fluxo: extrair, revisar, trocar imagens, conferir preview e enviar para o Drive.</span>
       </div>
 
-      <ProjectList projects={projects} loading={loadingProjects} onOpenProject={onOpenProject} onRefreshProjects={onRefreshProjects} />
+      <ProjectList
+        projects={projects}
+        loading={loadingProjects}
+        onOpenProject={onOpenProject}
+        onRefreshProjects={onRefreshProjects}
+        onRenameProject={onRenameProject}
+        onDeleteProject={onDeleteProject}
+      />
     </section>
   );
 }
@@ -756,6 +820,7 @@ export function App() {
   const [status, setStatus] = useState("Pronto para começar.");
   const [error, setError] = useState("");
   const [run, setRun] = useState(null);
+  const [manualStage, setManualStage] = useState("");
   const [draftSlides, setDraftSlides] = useState([]);
   const [draftCaptionEnglish, setDraftCaptionEnglish] = useState("");
   const [draftCaptionPortuguese, setDraftCaptionPortuguese] = useState("");
@@ -776,7 +841,7 @@ export function App() {
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
 
-  const activeStage = getActiveStage(run);
+  const activeStage = manualStage || getActiveStage(run);
   const extractionElapsedSeconds = extracting && extractStartedAt ? Math.floor((timerNow - extractStartedAt) / 1000) : 0;
   const extractionRemainingSeconds = Math.max(extractionEstimateSeconds - extractionElapsedSeconds, 0);
   const replacementPreviews = useMemo(
@@ -848,6 +913,7 @@ export function App() {
 
   function hydrateRun(nextRun) {
     setRun(nextRun);
+    setManualStage(getActiveStage(nextRun));
     setDraftSlides(nextRun.slides.map((slide) => ({ ...slide })));
     setDraftCaptionEnglish(nextRun.captionEnglish || "");
     setDraftCaptionPortuguese(nextRun.captionPortuguese || "");
@@ -855,6 +921,26 @@ export function App() {
     setCurrentReviewIndex(0);
     setPreviewIndex(0);
     setReplacementFiles([]);
+  }
+
+  function newProject() {
+    setRun(null);
+    setManualStage("");
+    setDraftSlides([]);
+    setDraftCaptionEnglish("");
+    setDraftCaptionPortuguese("");
+    setDraftHashtags("");
+    setCurrentReviewIndex(0);
+    setPreviewIndex(0);
+    setReplacementFiles([]);
+    setError("");
+    setStatus("Pronto para começar.");
+    loadProjects({ silent: true });
+  }
+
+  function goToStage(stage) {
+    setManualStage(stage);
+    setError("");
   }
 
   async function login() {
@@ -895,6 +981,7 @@ export function App() {
         items.map((item) => ({
           ...item,
           runId: item.runId || item.run_id,
+          title: item.title || "",
           sourceUrl: item.sourceUrl || item.source_url || "",
           captionEnglish: item.captionEnglish || item.caption_english || "",
           captionPortuguese: item.captionPortuguese || item.caption_portuguese || "",
@@ -906,6 +993,46 @@ export function App() {
       if (!silent) setError(requestError.message);
     } finally {
       setLoadingProjects(false);
+    }
+  }
+
+  async function renameProject(project, title) {
+    const cleanTitle = String(title || "").trim();
+    setError("");
+    setStatus("Renomeando projeto...");
+    try {
+      const response = await fetch(`${apiBase}/api/runs/${project.runId}/meta`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: cleanTitle }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui renomear o projeto.");
+      setProjects((current) => current.map((item) => (item.runId === project.runId ? { ...item, title: data.title || cleanTitle } : item)));
+      if (run?.runId === project.runId) setRun(data);
+      setStatus("Projeto renomeado.");
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Projeto não renomeado.");
+    }
+  }
+
+  async function deleteProject(project) {
+    const ok = window.confirm(`Apagar "${projectTitle(project)}"? Isso remove o projeto do histórico e os arquivos salvos no servidor.`);
+    if (!ok) return;
+
+    setError("");
+    setStatus("Apagando projeto...");
+    try {
+      const response = await fetch(`${apiBase}/api/runs/${project.runId}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Não consegui apagar o projeto.");
+      setProjects((current) => current.filter((item) => item.runId !== project.runId));
+      if (run?.runId === project.runId) newProject();
+      else setStatus("Projeto apagado.");
+    } catch (requestError) {
+      setError(requestError.message);
+      setStatus("Projeto não apagado.");
     }
   }
 
@@ -1163,8 +1290,13 @@ export function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Não consegui enviar para o Drive.");
       hydrateRun(data.run);
-      loadProjects({ silent: true });
+      await loadProjects({ silent: true });
       setStatus(`Arquivos enviados para ${data.driveExport?.folderName || "o Drive"}.`);
+      window.setTimeout(() => {
+        setRun(null);
+        setManualStage("");
+        setStatus("Post enviado. Pronto para o próximo.");
+      }, 900);
     } catch (requestError) {
       setError(requestError.message);
       setStatus("Envio ao Drive não concluído.");
@@ -1189,10 +1321,10 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <StepRail activeStage={activeStage} />
+      <StepRail activeStage={activeStage} run={run} onGoToStage={goToStage} onNewProject={newProject} />
 
       <section className="studio">
-        <StudioHeader activeStage={activeStage} status={status} />
+        <StudioHeader activeStage={activeStage} status={status} onNewProject={newProject} />
 
         {error && (
           <div className="error-banner" role="alert">
@@ -1214,6 +1346,8 @@ export function App() {
             loadingProjects={loadingProjects}
             onOpenProject={openProject}
             onRefreshProjects={loadProjects}
+            onRenameProject={renameProject}
+            onDeleteProject={deleteProject}
           />
         )}
 
