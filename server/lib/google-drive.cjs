@@ -6,6 +6,8 @@ const tokenEndpoint = "https://oauth2.googleapis.com/token";
 const authEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
 const driveApi = "https://www.googleapis.com/drive/v3";
 const driveUploadApi = "https://www.googleapis.com/upload/drive/v3/files";
+const appRootFolderName = "tiktokapp";
+const profileFolderNames = ["Perfil 1", "Perfil 2", "Perfil 3"];
 
 function createGoogleDriveStore(rootDir) {
   const tokenPath = path.join(rootDir, "google-drive-token.json");
@@ -58,7 +60,7 @@ function createGoogleDriveClient({ rootDir, store = createGoogleDriveStore(rootD
       client_id: clientId,
       redirect_uri: finalRedirectUri,
       response_type: "code",
-      scope: "https://www.googleapis.com/auth/drive.file",
+      scope: "https://www.googleapis.com/auth/drive",
       access_type: "offline",
       prompt: "consent",
       state,
@@ -133,6 +135,10 @@ function createGoogleDriveClient({ rootDir, store = createGoogleDriveStore(rootD
     return response;
   }
 
+  function escapeQueryValue(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  }
+
   async function listFolders({ parentId } = {}) {
     const query = [
       "mimeType = 'application/vnd.google-apps.folder'",
@@ -143,13 +149,30 @@ function createGoogleDriveClient({ rootDir, store = createGoogleDriveStore(rootD
       .join(" and ");
     const params = new URLSearchParams({
       q: query,
-      fields: "files(id,name,modifiedTime,parents)",
+      fields: "files(id,name,modifiedTime,parents,webViewLink)",
       orderBy: "name",
       pageSize: "100",
     });
     const response = await driveFetch(`${driveApi}/files?${params.toString()}`);
     const payload = await response.json();
     return payload.files || [];
+  }
+
+  async function findFolderByName({ name, parentId }) {
+    const query = [
+      "mimeType = 'application/vnd.google-apps.folder'",
+      "trashed = false",
+      `name = '${escapeQueryValue(name)}'`,
+      parentId ? `'${parentId}' in parents` : "'root' in parents",
+    ].join(" and ");
+    const params = new URLSearchParams({
+      q: query,
+      fields: "files(id,name,modifiedTime,parents,webViewLink)",
+      pageSize: "10",
+    });
+    const response = await driveFetch(`${driveApi}/files?${params.toString()}`);
+    const payload = await response.json();
+    return payload.files?.[0] || null;
   }
 
   async function createFolder({ name, parentId }) {
@@ -163,6 +186,19 @@ function createGoogleDriveClient({ rootDir, store = createGoogleDriveStore(rootD
       }),
     });
     return response.json();
+  }
+
+  async function ensureFolder({ name, parentId }) {
+    return (await findFolderByName({ name, parentId })) || createFolder({ name, parentId });
+  }
+
+  async function listDestinationFolders() {
+    const rootFolder = await ensureFolder({ name: appRootFolderName });
+    const folders = [];
+    for (const name of profileFolderNames) {
+      folders.push(await ensureFolder({ name, parentId: rootFolder.id }));
+    }
+    return { connected: true, rootFolder, folders };
   }
 
   async function nextPostFolderName(parentId) {
@@ -214,8 +250,29 @@ function createGoogleDriveClient({ rootDir, store = createGoogleDriveStore(rootD
       );
     }
 
-    uploads.push(await uploadFile({ name: "caption.txt", mimeType: "text/plain", parentId: folder.id, content: run.captionEnglish || "" }));
-    uploads.push(await uploadFile({ name: "hashtags.txt", mimeType: "text/plain", parentId: folder.id, content: (run.hashtags || []).join(" ") }));
+    uploads.push(
+      await uploadFile({
+        name: "post.md",
+        mimeType: "text/markdown",
+        parentId: folder.id,
+        content: [
+          "# Post",
+          "",
+          "## Caption",
+          "",
+          run.captionEnglish || "",
+          "",
+          "## Hashtags",
+          "",
+          (run.hashtags || []).join(" "),
+          "",
+          "## Slides",
+          "",
+          ...run.slides.map((slide) => `- slide-${String(slide.index).padStart(2, "0")}.jpg: ${slide.reviewedEnglish || slide.ocrEnglish || ""}`),
+          "",
+        ].join("\n"),
+      })
+    );
     uploads.push(
       await uploadFile({
         name: "post.json",
@@ -245,6 +302,7 @@ function createGoogleDriveClient({ rootDir, store = createGoogleDriveStore(rootD
   return {
     completeOAuth,
     exportRun,
+    listDestinationFolders,
     listFolders,
     startOAuth,
   };
