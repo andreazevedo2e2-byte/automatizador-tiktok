@@ -36,6 +36,11 @@ function createMemoryStore() {
       const existing = runs.get(run.runId) || {};
       runs.set(run.runId, { ...existing, ...run, updatedAt: new Date().toISOString() });
     },
+    async deleteRun(runId) {
+      runs.delete(runId);
+      destinationMap.delete(runId);
+      eventMap.delete(runId);
+    },
     async saveDestinations(runId, destinations = []) {
       const normalized = destinations.map((destination) => normalizeDestination(runId, destination));
       destinationMap.set(runId, normalized);
@@ -116,6 +121,12 @@ function createSupabaseRestStore({ supabaseUrl, serviceRoleKey, fetchImpl = fetc
             updated_at: new Date().toISOString(),
           },
         ]),
+      });
+    },
+    async deleteRun(runId) {
+      await request(`/rest/v1/post_runs?run_id=eq.${encodeURIComponent(runId)}`, {
+        method: "DELETE",
+        headers: { Prefer: "return=minimal" },
       });
     },
     async saveDestinations(runId, destinations = []) {
@@ -213,6 +224,7 @@ function createPublishStore(config = {}) {
 
     return {
       upsertRun: (...args) => withFallback("upsertRun", args),
+      deleteRun: (...args) => withFallback("deleteRun", args),
       saveDestinations: (...args) => withFallback("saveDestinations", args),
       updateDestination: (...args) => withFallback("updateDestination", args),
       recordEvent: (...args) => withFallback("recordEvent", args),
