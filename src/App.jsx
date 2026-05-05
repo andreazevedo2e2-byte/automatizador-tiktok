@@ -1,12 +1,10 @@
 import {
   ArrowRight,
-  CalendarClock,
   Check,
   Clipboard,
   Download,
   ImagePlus,
   Loader2,
-  Play,
   ScanText,
   Send,
   Sparkles,
@@ -26,17 +24,15 @@ const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
   { key: "review", number: "02", title: "Revisar", hint: "Texto em português" },
   { key: "images", number: "03", title: "Imagens", hint: "Substituir na ordem" },
-  { key: "generate", number: "04", title: "Gerar", hint: "Aplicar legendas" },
-  { key: "download", number: "05", title: "Baixar", hint: "Slides e ZIP" },
-  { key: "publish", number: "06", title: "Publicar", hint: "Postiz e contas" },
+  { key: "download", number: "04", title: "Finalizar", hint: "Preview e Drive" },
 ];
 
 const stageByRun = {
   review: "review",
   images: "images",
-  render: "generate",
+  render: "images",
   preview: "download",
-  publish: "publish",
+  publish: "download",
 };
 
 const stageIndex = Object.fromEntries(steps.map((step, index) => [step.key, index]));
@@ -265,7 +261,7 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots,
 
       <div className="soft-note">
         <Sparkles size={18} />
-        <span>O fluxo é local: extrai, revisa, troca as imagens, gera preview e baixa ZIP.</span>
+        <span>Fluxo: extrair, revisar, trocar imagens, conferir preview e enviar para o Drive.</span>
       </div>
     </section>
   );
@@ -360,6 +356,7 @@ function ReviewStage({
 
 function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFile, onClearFiles, previews, onUpload, uploading }) {
   const inputRef = useRef(null);
+  const [draggedIndex, setDraggedIndex] = useState(null);
   const expected = run.slides.length;
   const ready = selectedFiles.length === expected;
   const slots = Array.from({ length: expected }, (_, index) => previews[index] || null);
@@ -373,6 +370,13 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
   function handleDrop(event) {
     event.preventDefault();
     onSelectFiles(event.dataTransfer.files);
+  }
+
+  function handleCardDrop(event, index) {
+    event.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+    onMoveFile(draggedIndex, index);
+    setDraggedIndex(null);
   }
 
   return (
@@ -411,17 +415,21 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
 
       <div className="image-slot-grid" aria-label="Ordem das imagens finais">
         {slots.map((preview, index) => (
-          <article className={`image-slot-card ${preview ? "filled" : ""}`} key={index}>
+          <article
+            className={`image-slot-card ${preview ? "filled" : ""} ${draggedIndex === index ? "dragging" : ""}`}
+            key={index}
+            draggable={Boolean(preview) && !uploading}
+            onDragStart={() => setDraggedIndex(index)}
+            onDragEnd={() => setDraggedIndex(null)}
+            onDragOver={(event) => {
+              if (preview) event.preventDefault();
+            }}
+            onDrop={(event) => handleCardDrop(event, index)}
+          >
             {preview ? (
               <>
                 <img src={preview.url} alt={`Nova imagem ${index + 1}`} />
                 <div className="image-slot-card__actions">
-                  <button type="button" onClick={() => onMoveFile(index, index - 1)} disabled={uploading || index === 0}>
-                    ←
-                  </button>
-                  <button type="button" onClick={() => onMoveFile(index, index + 1)} disabled={uploading || index === selectedFiles.length - 1}>
-                    →
-                  </button>
                   <button type="button" onClick={() => onRemoveFile(index)} disabled={uploading} aria-label={`Remover imagem ${index + 1}`}>
                     Remover
                   </button>
@@ -445,46 +453,74 @@ function ImageStage({ run, selectedFiles, onSelectFiles, onRemoveFile, onMoveFil
       <div className="stage-footer">
         <button className="action-button main-action" type="button" onClick={onUpload} disabled={!ready || uploading}>
           {uploading ? <Loader2 className="spin" size={18} /> : <UploadCloud size={18} />}
-          Enviar imagens
+          OK, montar slideshow
         </button>
       </div>
     </section>
   );
 }
 
-function GenerateStage({ run, onRender, rendering }) {
-  const hashtags = hashtagsToText(run.hashtags);
+function DrivePanel({ run, folders, loading, exporting, onRefresh, onConnect, onExport }) {
+  const [selectedFolderId, setSelectedFolderId] = useState("");
+
+  useEffect(() => {
+    if (!selectedFolderId && folders.length) setSelectedFolderId(folders[0].id);
+  }, [folders, selectedFolderId]);
 
   return (
-    <section className="stage-card generate-stage">
-      <div className="stage-copy">
-        <p className="stage-label">Etapa 04</p>
-        <h2>Gerar slideshow final</h2>
-        <p>Agora eu aplico o texto revisado nas imagens novas, mantendo formato vertical e texto legível para TikTok.</p>
-      </div>
-
-      <div className="generate-board">
+    <article className="drive-panel">
+      <div className="drive-panel__header">
         <div>
-          <strong>{run.slides.length}</strong>
-          <span>slides prontos para renderizar</span>
+          <span>Google Drive</span>
+          <strong>Enviar para uma pasta</strong>
         </div>
-        {hasContent(hashtags) && (
-          <div>
-            <strong>{hashtags}</strong>
-            <span>hashtags salvas</span>
-          </div>
-        )}
+        <button className="action-button quiet-action" type="button" onClick={onRefresh} disabled={loading}>
+          {loading ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
+          Atualizar
+        </button>
       </div>
 
-      <button className="action-button main-action huge-action" type="button" onClick={onRender} disabled={rendering}>
-        {rendering ? <Loader2 className="spin" size={20} /> : <Play size={20} />}
-        Gerar preview final
-      </button>
-    </section>
+      {run.driveExport ? (
+        <div className="drive-success">
+          <Check size={18} />
+          <div>
+            <strong>Enviado para {run.driveExport.folderName}</strong>
+            <span>{run.driveExport.files?.length || 0} arquivos salvos no Drive.</span>
+          </div>
+        </div>
+      ) : null}
+
+      {folders.length ? (
+        <>
+          <label className="input-group">
+            <span>Pasta do Drive</span>
+            <select value={selectedFolderId} onChange={(event) => setSelectedFolderId(event.target.value)}>
+              {folders.map((folder) => (
+                <option value={folder.id} key={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="action-button main-action" type="button" onClick={() => onExport(selectedFolderId)} disabled={exporting || !selectedFolderId}>
+            {exporting ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+            Enviar para o Drive
+          </button>
+        </>
+      ) : (
+        <div className="empty-publish">
+          <p>Conecte o Google Drive para escolher a pasta de destino.</p>
+          <button className="action-button main-action" type="button" onClick={onConnect} disabled={loading}>
+            <Send size={16} />
+            Conectar Drive
+          </button>
+        </div>
+      )}
+    </article>
   );
 }
 
-function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
+function DownloadStage({ run, activeIndex, setActiveIndex, driveFolders, loadingDrive, exportingDrive, onRefreshDrive, onConnectDrive, onExportDrive }) {
   const slide = run.slides[activeIndex];
   const caption = run.captionPortuguese || run.captionEnglish || "";
   const hashtags = hashtagsToText(run.hashtags);
@@ -494,9 +530,9 @@ function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
       <div className="download-workbench">
         <div className="story-column">
           <div className="download-title">
-            <p className="stage-label">Etapa 05</p>
+            <p className="stage-label">Etapa 04</p>
             <h2>Preview final</h2>
-            <p>Clique nas laterais para conferir todos os slides.</p>
+            <p>Confira os slides, baixe os arquivos ou envie tudo para uma pasta no Google Drive.</p>
           </div>
           <PhonePreview
             rendered
@@ -519,11 +555,17 @@ function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
               <Download size={18} />
               Baixar ZIP completo
             </a>
-            <button className="action-button main-action" type="button" onClick={onContinue}>
-              <Send size={18} />
-              Publicar no Postiz
-            </button>
           </div>
+
+          <DrivePanel
+            run={run}
+            folders={driveFolders}
+            loading={loadingDrive}
+            exporting={exportingDrive}
+            onRefresh={onRefreshDrive}
+            onConnect={onConnectDrive}
+            onExport={onExportDrive}
+          />
 
           {hasContent(caption) && (
             <article className="script-card">
@@ -552,125 +594,6 @@ function DownloadStage({ run, activeIndex, setActiveIndex, onContinue }) {
   );
 }
 
-function PublishStage({ run, accounts, loadingAccounts, onRefreshAccounts, onConnectPostiz, onQueue, publishing }) {
-  const [selectedIds, setSelectedIds] = useState(() => new Set((run.destinations || []).map((destination) => destination.accountId)));
-  const [scheduledAt, setScheduledAt] = useState("");
-  const caption = [run.captionEnglish, hashtagsToText(run.hashtags)].filter(Boolean).join(" ").trim();
-
-  useEffect(() => {
-    setSelectedIds(new Set((run.destinations || []).map((destination) => destination.accountId)));
-  }, [run.runId]);
-
-  function toggleAccount(accountId) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(accountId)) next.delete(accountId);
-      else next.add(accountId);
-      return next;
-    });
-  }
-
-  const destinations = accounts
-    .filter((account) => selectedIds.has(account.id))
-    .map((account) => ({
-      accountId: account.id,
-      accountName: account.name,
-      accountHandle: account.handle,
-      scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
-    }));
-
-  return (
-    <section className="stage-card publish-stage">
-      <div className="publish-layout">
-        <div className="stage-copy">
-          <p className="stage-label">Etapa 06</p>
-          <h2>Enviar para o Postiz</h2>
-          <p>
-            Selecione as contas TikTok, defina um horário opcional e envie como rascunho seguro. Depois você finaliza no
-            app do TikTok.
-          </p>
-          <div className="safe-mode-card">
-            <CalendarClock size={22} />
-            <div>
-              <strong>Modo seguro ativado</strong>
-              <span>O app cria rascunho/upload no Postiz, não publicação direta automática.</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="publish-panel">
-          <div className="publish-panel__header">
-            <strong>Contas TikTok</strong>
-            <button className="action-button quiet-action" type="button" onClick={onRefreshAccounts} disabled={loadingAccounts}>
-              {loadingAccounts ? <Loader2 className="spin" size={16} /> : <ScanText size={16} />}
-              Atualizar
-            </button>
-          </div>
-
-          {!accounts.length && (
-            <div className="empty-publish">
-              <p>Nenhuma conta TikTok carregada. Conecte o Postiz uma vez e depois escolha as contas.</p>
-              <button className="action-button main-action" type="button" onClick={onConnectPostiz}>
-                <Send size={16} />
-                Conectar Postiz
-              </button>
-            </div>
-          )}
-
-          <div className="account-grid">
-            {accounts.map((account) => (
-              <button
-                className={`account-card ${selectedIds.has(account.id) ? "selected" : ""}`}
-                key={account.id}
-                type="button"
-                onClick={() => toggleAccount(account.id)}
-              >
-                {account.picture ? <img src={account.picture} alt="" /> : <span>{(account.name || "T").slice(0, 1)}</span>}
-                <div>
-                  <strong>{account.name || "TikTok"}</strong>
-                  <small>{account.handle ? `@${account.handle}` : account.id}</small>
-                </div>
-                <Check size={18} />
-              </button>
-            ))}
-          </div>
-
-          <label className="input-group">
-            <span>Horário opcional</span>
-            <input type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
-          </label>
-
-          <article className="script-card compact-script">
-            <span>Legenda final em inglês</span>
-            <p>{caption || "Sem legenda detectada."}</p>
-          </article>
-
-          {!!run.destinations?.length && (
-            <div className="destination-status-list">
-              {run.destinations.map((destination) => (
-                <div key={destination.accountId}>
-                  <strong>{destination.accountName || destination.accountHandle || destination.accountId}</strong>
-                  <span>{destination.status === "waiting_manual_publish" ? "Rascunho enviado" : destination.status}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            className="action-button main-action huge-action"
-            type="button"
-            onClick={() => onQueue(destinations)}
-            disabled={publishing || !destinations.length}
-          >
-            {publishing ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-            Enviar rascunho para {destinations.length || 0} conta(s)
-          </button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export function App() {
   const [url, setUrl] = useState(sampleUrl);
   const [status, setStatus] = useState("Pronto para começar.");
@@ -689,9 +612,9 @@ export function App() {
   const [savingReview, setSavingReview] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [rendering, setRendering] = useState(false);
-  const [accounts, setAccounts] = useState([]);
-  const [loadingAccounts, setLoadingAccounts] = useState(false);
-  const [publishing, setPublishing] = useState(false);
+  const [driveFolders, setDriveFolders] = useState([]);
+  const [loadingDrive, setLoadingDrive] = useState(false);
+  const [exportingDrive, setExportingDrive] = useState(false);
 
   const activeStage = getActiveStage(run);
   const extractionElapsedSeconds = extracting && extractStartedAt ? Math.floor((timerNow - extractStartedAt) / 1000) : 0;
@@ -720,40 +643,40 @@ export function App() {
   }, [extracting, extractStartedAt]);
 
   useEffect(() => {
-    if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
-      loadPostizAccounts();
-    }
-  }, [activeStage]);
-
-  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
     const oauthError = params.get("error");
-    if (window.location.pathname !== "/callback" || (!code && !oauthError)) return;
+    if (window.location.pathname !== "/google-drive/callback" || (!code && !oauthError)) return;
 
-    async function finishPostizOAuth() {
-      setStatus("Conectando Postiz...");
+    async function finishDriveOAuth() {
+      setStatus("Conectando Google Drive...");
       setError("");
       try {
-        const response = await fetch(`${apiBase}/api/postiz/oauth/callback`, {
+        const response = await fetch(`${apiBase}/api/google-drive/oauth/callback`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, state, error: oauthError }),
+          body: JSON.stringify({
+            code,
+            state,
+            error: oauthError,
+            redirectUri: `${window.location.origin}/google-drive/callback`,
+          }),
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Não consegui conectar o Postiz.");
-        setAccounts(data.accounts || []);
-        setStatus("Postiz conectado. Volte para a etapa Publicar.");
+        if (!response.ok) throw new Error(data.error || "Não consegui conectar o Google Drive.");
+        setDriveFolders(data.folders || []);
+        setStatus("Google Drive conectado.");
         window.history.replaceState({}, "", "/");
       } catch (requestError) {
         setError(requestError.message);
-        setStatus("Postiz não conectado.");
+        setStatus("Google Drive não conectado.");
       }
     }
 
-    finishPostizOAuth();
+    finishDriveOAuth();
   }, []);
+
 
   function hydrateRun(nextRun) {
     setRun(nextRun);
@@ -924,7 +847,8 @@ export function App() {
 
     setError("");
     setUploadingImages(true);
-    setStatus("Enviando imagens novas...");
+    setRendering(true);
+    setStatus("Enviando imagens e gerando slideshow...");
 
     try {
       const formData = new FormData();
@@ -933,93 +857,78 @@ export function App() {
         method: "POST",
         body: formData,
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui enviar as imagens.");
-      hydrateRun(data);
-      setStatus("Imagens salvas. Pode gerar o preview.");
+      const uploaded = await response.json();
+      if (!response.ok) throw new Error(uploaded.error || "Não consegui enviar as imagens.");
+
+      const renderResponse = await fetch(`${apiBase}/api/runs/${uploaded.runId}/render`, { method: "POST" });
+      const rendered = await renderResponse.json();
+      if (!renderResponse.ok) throw new Error(rendered.error || "Não consegui gerar o preview.");
+
+      hydrateRun(rendered);
+      setStatus("Preview pronto. Você já pode baixar ou enviar para o Drive.");
+      loadDriveFolders({ silent: true });
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Upload não concluído.");
+      setStatus("Slideshow não gerado.");
     } finally {
       setUploadingImages(false);
-    }
-  }
-
-  async function renderSlideshow() {
-    if (!run) return;
-
-    setError("");
-    setRendering(true);
-    setStatus("Gerando slideshow final...");
-
-    try {
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/render`, { method: "POST" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui gerar o preview.");
-      hydrateRun(data);
-      setStatus("Preview pronto para baixar.");
-    } catch (requestError) {
-      setError(requestError.message);
-      setStatus("Preview não gerado.");
-    } finally {
       setRendering(false);
     }
   }
 
-  async function loadPostizAccounts() {
-    setLoadingAccounts(true);
-    setError("");
+  async function loadDriveFolders({ silent = false } = {}) {
+    setLoadingDrive(true);
+    if (!silent) setError("");
     try {
-      const response = await fetch(`${apiBase}/api/postiz/accounts`);
+      const response = await fetch(`${apiBase}/api/google-drive/folders`);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui carregar as contas do Postiz.");
-      setAccounts(data.accounts || []);
-      setStatus(data.accounts?.length ? `${data.accounts.length} conta(s) TikTok carregada(s).` : "Nenhuma conta TikTok encontrada no Postiz.");
+      if (!response.ok) throw new Error(data.error || "Não consegui carregar as pastas do Drive.");
+      setDriveFolders(data.folders || []);
+      if (!silent) setStatus(data.folders?.length ? "Pastas do Drive carregadas." : "Drive conectado, mas sem pastas encontradas.");
     } catch (requestError) {
-      setError(requestError.message);
-      setStatus("Postiz ainda não conectado.");
+      if (!silent) setError(requestError.message);
     } finally {
-      setLoadingAccounts(false);
+      setLoadingDrive(false);
     }
   }
 
-  async function connectPostiz() {
+  async function connectDrive() {
     setError("");
-    setStatus("Abrindo autorização do Postiz...");
+    setStatus("Abrindo conexão com Google Drive...");
     try {
-      const response = await fetch(`${apiBase}/api/postiz/oauth/start`);
+      const response = await fetch(`${apiBase}/api/google-drive/oauth/start`);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui iniciar a conexão com Postiz.");
+      if (!response.ok) throw new Error(data.error || "Não consegui iniciar a conexão com Google Drive.");
       window.location.href = data.authorizeUrl;
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Conexão com Postiz não iniciada.");
+      setStatus("Conexão com Drive não iniciada.");
     }
   }
 
-  async function queuePostizDraft(destinations) {
+  async function exportToDrive(folderId) {
     if (!run) return;
-    setPublishing(true);
     setError("");
-    setStatus("Enviando rascunho para o Postiz...");
-
+    setExportingDrive(true);
+    setStatus("Enviando arquivos para o Google Drive...");
     try {
-      const response = await fetch(`${apiBase}/api/runs/${run.runId}/postiz/queue`, {
+      const response = await fetch(`${apiBase}/api/runs/${run.runId}/google-drive/export`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ destinations }),
+        body: JSON.stringify({ folderId }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Não consegui enviar ao Postiz.");
+      if (!response.ok) throw new Error(data.error || "Não consegui enviar para o Drive.");
       hydrateRun(data.run);
-      setStatus("Rascunho enviado. Confira no Postiz/TikTok antes de publicar.");
+      setStatus(`Arquivos enviados para ${data.driveExport?.folderName || "o Drive"}.`);
     } catch (requestError) {
       setError(requestError.message);
-      setStatus("Envio ao Postiz não concluído.");
+      setStatus("Envio ao Drive não concluído.");
     } finally {
-      setPublishing(false);
+      setExportingDrive(false);
     }
   }
+
 
   return (
     <main className="app-shell">
@@ -1077,33 +986,21 @@ export function App() {
           />
         )}
 
-        {activeStage === "generate" && run && <GenerateStage run={run} onRender={renderSlideshow} rendering={rendering} />}
-
         {activeStage === "download" && run && (
           <DownloadStage
             run={run}
             activeIndex={previewIndex}
             setActiveIndex={setPreviewIndex}
-            onContinue={() => {
-              setRun({ ...run, stage: "publish" });
-              loadPostizAccounts();
-            }}
+            driveFolders={driveFolders}
+            loadingDrive={loadingDrive}
+            exportingDrive={exportingDrive}
+            onRefreshDrive={loadDriveFolders}
+            onConnectDrive={connectDrive}
+            onExportDrive={exportToDrive}
           />
         )}
 
-        {activeStage === "publish" && run && (
-          <PublishStage
-            run={run}
-            accounts={accounts}
-            loadingAccounts={loadingAccounts}
-            onRefreshAccounts={loadPostizAccounts}
-            onConnectPostiz={connectPostiz}
-            onQueue={queuePostizDraft}
-            publishing={publishing}
-          />
-        )}
-
-        {(extracting || savingReview || uploadingImages || rendering || publishing) && (
+        {(extracting || savingReview || uploadingImages || rendering || exportingDrive) && (
           <div className="work-overlay">
             <LoadingIcon active />
             <span>

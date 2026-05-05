@@ -1,6 +1,6 @@
 const allowedStatuses = new Set([
   "draft",
-  "sent_to_postiz",
+  "sent_to_drive",
   "scheduled",
   "waiting_manual_publish",
   "published",
@@ -19,8 +19,8 @@ function normalizeDestination(runId, destination = {}) {
     accountHandle: String(destination.accountHandle || destination.handle || "").trim(),
     scheduledAt: destination.scheduledAt || null,
     status: normalizePostStatus(destination.status),
-    postizPostId: destination.postizPostId || null,
-    postizResponse: destination.postizResponse || null,
+    externalPostId: destination.externalPostId || null,
+    externalResponse: destination.externalResponse || null,
     error: destination.error || null,
     updatedAt: new Date().toISOString(),
   };
@@ -131,8 +131,8 @@ function createSupabaseRestStore({ supabaseUrl, serviceRoleKey, fetchImpl = fetc
             account_handle: destination.accountHandle,
             scheduled_at: destination.scheduledAt,
             status: destination.status,
-            postiz_post_id: destination.postizPostId,
-            postiz_response: destination.postizResponse,
+            external_post_id: destination.externalPostId,
+            external_response: destination.externalResponse,
             error: destination.error,
             updated_at: destination.updatedAt,
           }))
@@ -143,8 +143,8 @@ function createSupabaseRestStore({ supabaseUrl, serviceRoleKey, fetchImpl = fetc
     async updateDestination(runId, accountId, patch = {}) {
       const normalizedPatch = {
         status: normalizePostStatus(patch.status),
-        postiz_post_id: patch.postizPostId || null,
-        postiz_response: patch.postizResponse || null,
+        external_post_id: patch.externalPostId || null,
+        external_response: patch.externalResponse || null,
         error: patch.error || null,
         updated_at: new Date().toISOString(),
       };

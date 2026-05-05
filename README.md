@@ -20,7 +20,7 @@ Open `http://127.0.0.1:5173`.
 - If TikTok asks for login, click `Open Login Browser`, log in, and run extraction again.
 - If TikTok blocks login, use `Upload Images` to OCR screenshots or downloaded slide images directly.
 - Each extraction is saved under `runs/<timestamp>/`.
-- The final step can send rendered slides to Postiz as a safe TikTok draft/upload flow.
+- The final step can send rendered slides to a selected Google Drive folder.
 
 ## Production (Vercel + VPS)
 
@@ -31,8 +31,9 @@ Use service type Docker Compose and paste [docker-compose.yml](/C:/Users/andre/D
 Before deploy, edit:
 
 - `ALLOWED_ORIGINS=https://automatizador-tiktok.vercel.app`
-- `POSTIZ_URL=https://seu-postiz-na-vps.com`
-- `POSTIZ_API_KEY=...`
+- `GOOGLE_CLIENT_ID=...`
+- `GOOGLE_CLIENT_SECRET=...`
+- `GOOGLE_REDIRECT_URI=https://automatizador-tiktok-six.vercel.app/google-drive/callback`
 - `SUPABASE_URL=...` and `SUPABASE_SERVICE_ROLE_KEY=...` if you want persistent history.
 
 Expose port `4141` via your domain, for example:
@@ -55,10 +56,10 @@ In the deployed frontend:
 2. If TikTok blocks login on the server environment, use `Upload Images` fallback.
 3. Keep `browser-profile` persistent volume mounted (already in compose).
 
-## Postiz + Supabase
+## Google Drive + Supabase
 
-1. Install Postiz self-hosted on EasyPanel and connect your TikTok accounts there.
-2. Generate a Postiz API key and set `POSTIZ_URL` + `POSTIZ_API_KEY` in the backend.
+1. Create a Google OAuth app and add `https://automatizador-tiktok-six.vercel.app/google-drive/callback` as redirect URL.
+2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in the backend.
 3. In Supabase SQL Editor, run `supabase/schema.sql`.
 4. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the backend, never in Vercel frontend env.
-5. The app sends posts as a draft/upload flow by default; publish/final approval stays manual in TikTok.
+5. The app creates `post 1`, `post 2`, etc. inside the selected Drive folder.

@@ -13,15 +13,15 @@ describe("publish store", () => {
       { accountId: "tt-1", accountName: "One", accountHandle: "one", scheduledAt: "2026-05-01T18:00:00.000Z" },
     ]);
     await store.recordEvent({ runId: "run-1", type: "queued", message: "Sent" });
-    await store.updateDestination("run-1", "tt-1", { status: "sent_to_postiz", postizPostId: "post-1" });
+    await store.updateDestination("run-1", "tt-1", { status: "sent_to_drive", externalPostId: "drive-folder-1" });
 
     const history = await store.listHistory();
 
     expect(history).toHaveLength(1);
     expect(history[0].destinations[0]).toMatchObject({
       accountId: "tt-1",
-      status: "sent_to_postiz",
-      postizPostId: "post-1",
+      status: "sent_to_drive",
+      externalPostId: "drive-folder-1",
     });
     expect(history[0].events[0].type).toBe("queued");
   });

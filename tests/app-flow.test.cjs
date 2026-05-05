@@ -77,14 +77,14 @@ describe("app flow", () => {
         }),
         translateTexts: async ({ texts, from, to }) =>
           texts.map((text) => `[${from}->${to}] ${text}`),
-        postiz: {
-          listTikTokAccounts: async () => [
-            { id: "tt-1", provider: "tiktok", name: "Account One", handle: "one", picture: "", disabled: false },
-            { id: "tt-2", provider: "tiktok", name: "Account Two", handle: "two", picture: "", disabled: false },
-          ],
-          createTikTokDraft: async ({ accountId }) => ({
-            uploads: [{ id: "media-1", path: "https://cdn.test/slide.jpg" }],
-            posts: [{ postId: `post-${accountId}`, integration: accountId }],
+        googleDrive: {
+          listFolders: async () => [{ id: "folder-1", name: "perfil 1" }],
+          exportRun: async () => ({
+            folder: { id: "post-folder-1", name: "post 1", webViewLink: "https://drive.test/post-1" },
+            files: [
+              { id: "file-1", name: "slide-01.jpg" },
+              { id: "file-2", name: "caption.txt" },
+            ],
           }),
         },
       },
@@ -137,26 +137,18 @@ describe("app flow", () => {
     expect(zip.headers["content-type"]).toContain("application/zip");
     expect(Number(zip.headers["content-length"] || 0)).toBeGreaterThan(2000);
 
-    const accounts = await request(app).get("/api/postiz/accounts").expect(200);
-    expect(accounts.body.accounts).toHaveLength(2);
+    const folders = await request(app).get("/api/google-drive/folders").expect(200);
+    expect(folders.body.folders).toHaveLength(1);
 
-    const queue = await request(app)
-      .post(`/api/runs/${runId}/postiz/queue`)
-      .send({
-        destinations: [
-          { accountId: "tt-1", accountName: "Account One", accountHandle: "one" },
-          { accountId: "tt-2", accountName: "Account Two", accountHandle: "two" },
-        ],
-      })
+    const drive = await request(app)
+      .post(`/api/runs/${runId}/google-drive/export`)
+      .send({ folderId: "folder-1" })
       .expect(200);
 
-    expect(queue.body.run.stage).toBe("publish");
-    expect(queue.body.destinations.map((destination) => destination.status)).toEqual([
-      "waiting_manual_publish",
-      "waiting_manual_publish",
-    ]);
+    expect(drive.body.run.stage).toBe("preview");
+    expect(drive.body.driveExport.folderName).toBe("post 1");
 
     const history = await request(app).get("/api/history").expect(200);
-    expect(history.body.items[0].destinations).toHaveLength(2);
+    expect(history.body.items[0].stage).toBe("preview");
   });
 });

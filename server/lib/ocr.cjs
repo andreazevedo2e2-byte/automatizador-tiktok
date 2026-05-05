@@ -430,7 +430,11 @@ async function runTesseractCandidates(worker, imagePath, crop) {
 async function runPaddleCandidates(rootDir, imagePath) {
   try {
     const service = await getPaddleService(rootDir);
-    const { data, info } = await sharp(imagePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const metadata = await sharp(imagePath).metadata();
+    const originalWidth = metadata.width || 1080;
+    const originalHeight = metadata.height || 1920;
+    const pipeline = sharp(imagePath).resize({ width: 900, withoutEnlargement: true });
+    const { data, info } = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const rawRecognition = await service.recognize(
       {
         width: info.width,
@@ -445,7 +449,17 @@ async function runPaddleCandidates(rootDir, imagePath) {
       }
     );
 
-    const boxes = rawRecognition.map((entry) => entry.box).filter(Boolean);
+    const scaleX = originalWidth / info.width;
+    const scaleY = originalHeight / info.height;
+    const boxes = rawRecognition
+      .map((entry) => entry.box)
+      .filter(Boolean)
+      .map((box) => ({
+        x: box.x * scaleX,
+        y: box.y * scaleY,
+        width: box.width * scaleX,
+        height: box.height * scaleY,
+      }));
     const text = buildPaddleText(rawRecognition, service);
     const confidence = rawRecognition.length
       ? Math.round((rawRecognition.reduce((sum, entry) => sum + (entry.confidence || 0), 0) / rawRecognition.length) * 100)
