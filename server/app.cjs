@@ -126,7 +126,8 @@ function createApp(config = {}) {
       const { code, state, error, redirectUri } = req.body || {};
       if (error) throw new Error(`Google Drive negou a conexão: ${error}`);
       await services.googleDrive.completeOAuth({ code, state, redirectUri });
-      res.json({ ok: true, folders: await services.googleDrive.listFolders() });
+      const destination = await services.googleDrive.listDestinationFolders();
+      res.json({ ok: true, ...destination });
     } catch (callbackError) {
       res.status(400).json({ error: callbackError.message || "Could not complete Google Drive OAuth." });
     }
@@ -134,7 +135,7 @@ function createApp(config = {}) {
 
   app.get("/api/google-drive/folders", async (_req, res) => {
     try {
-      res.json({ folders: await services.googleDrive.listFolders() });
+      res.json(await services.googleDrive.listDestinationFolders());
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not list Google Drive folders." });
     }
