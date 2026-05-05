@@ -8,3 +8,5 @@ ocr-models
 tmp-ocr-test
 
 .vercel
+local-logs
+tmp-*
