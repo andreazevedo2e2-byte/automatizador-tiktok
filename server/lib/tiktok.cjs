@@ -1,5 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const crypto = require("node:crypto");
+const vm = require("node:vm");
 const { chromium } = require("playwright");
 
 async function findChromeExecutable() {
@@ -33,11 +35,104 @@ async function launchEphemeralBrowser() {
 }
 
 const snaptikSlidePages = ["https://snaptik.app/pt/download-tiktok-slide", "https://snaptik.app/download-tiktok-slide"];
+const browserUserAgent =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+function decodeSnapTikScript(script) {
+  let decoded = "";
+  try {
+    vm.runInNewContext(script, {
+      eval: (value) => {
+        decoded = String(value || "");
+      },
+      decodeURIComponent,
+      escape,
+      Math,
+      RegExp,
+      String,
+    });
+  } catch {
+    return script;
+  }
+  return decoded || script;
+}
+
+function extractUrlsFromSnapTikScript(script) {
+  const decoded = decodeSnapTikScript(script);
+  const matches = decoded.match(/https?:\\?\/\\?\/[^"'<>\\\s]+/g) || [];
+  return [...new Set(
+    matches
+      .map((url) =>
+        url
+          .replace(/\\\//g, "/")
+          .replace(/\\u0026/g, "&")
+          .replace(/&amp;/g, "&")
+          .replace(/\\+$/g, "")
+          .trim()
+      )
+      .filter((url) => url.includes("d.rapidcdn.app/v2") || url.includes("tiktokcdn"))
+  )];
+}
+
+async function fetchSnapTikDownloadUrls(sourceUrl) {
+  const response = await fetch("https://snaptik.app/pt/download-tiktok-slide", {
+    headers: { "user-agent": browserUserAgent },
+  });
+  if (!response.ok) throw new Error(`SnapTik page returned ${response.status}.`);
+  const html = await response.text();
+  const token = html.match(/name=["']token["']\s+value=["']([^"']+)["']/i)?.[1] || "";
+
+  const form = new FormData();
+  form.set("url", sourceUrl);
+  form.set("lang", "pt");
+  if (token) form.set("token", token);
+
+  const apiResponse = await fetch("https://snaptik.app/abc2.php", {
+    method: "POST",
+    body: form,
+    headers: {
+      "user-agent": browserUserAgent,
+      referer: "https://snaptik.app/pt/download-tiktok-slide",
+    },
+  });
+  if (!apiResponse.ok) throw new Error(`SnapTik API returned ${apiResponse.status}.`);
+
+  const urls = extractUrlsFromSnapTikScript(await apiResponse.text());
+  const tiktokCdnUrls = urls.filter((url) => url.includes("tiktokcdn") && /photomode|tplv-photomode/i.test(url));
+  const rapidUrls = urls.filter((url) => url.includes("d.rapidcdn.app/v2"));
+  return tiktokCdnUrls.length ? tiktokCdnUrls : rapidUrls.length ? rapidUrls : urls;
+}
+
+async function downloadSlideUrls(imageUrls, slidesDir) {
+  const slidePaths = [];
+  const seenHashes = new Set();
+  for (const imageUrl of imageUrls) {
+    try {
+      const response = await fetch(imageUrl, {
+        headers: {
+          "user-agent": browserUserAgent,
+        },
+      });
+      if (!response.ok) continue;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length < 5000) continue;
+      const hash = crypto.createHash("sha1").update(bytes).digest("hex");
+      if (seenHashes.has(hash)) continue;
+      seenHashes.add(hash);
+      const slidePath = path.join(slidesDir, `slide-${String(slidePaths.length + 1).padStart(2, "0")}.jpg`);
+      await fs.writeFile(slidePath, bytes);
+      slidePaths.push(slidePath);
+    } catch {
+      // Some signed CDN URLs expire or reject occasional requests.
+    }
+  }
+  return slidePaths;
+}
 
 async function prepareSnapTikPage(page) {
   await page.route("**/*", (route) => {
     const type = route.request().resourceType();
-    if (["font", "image", "media"].includes(type)) {
+    if (["font", "media"].includes(type)) {
       route.abort().catch(() => {});
       return;
     }
@@ -59,6 +154,24 @@ async function gotoSnapTikSlidePage(page) {
   throw lastError || new Error("SnapTik did not load.");
 }
 
+async function submitSnapTikUrl(page, sourceUrl) {
+  await page.fill("#url", sourceUrl);
+  const submitted = await page.evaluate(() => {
+    const button = document.querySelector('button[type="submit"], input[type="submit"], .button-submit');
+    if (button) {
+      button.click();
+      return true;
+    }
+    const input = document.querySelector("#url");
+    const form = input?.closest("form");
+    if (!form) return false;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    return false;
+  });
+  if (submitted) return;
+  await page.locator("#url").press("Enter");
+}
+
 async function launchPersistentContext(profileDir, isHeadless) {
   const executablePath = await findChromeExecutable();
   return chromium.launchPersistentContext(profileDir, {
@@ -72,6 +185,10 @@ async function launchPersistentContext(profileDir, isHeadless) {
 }
 
 async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
+  const directUrls = await fetchSnapTikDownloadUrls(sourceUrl);
+  const directSlidePaths = await downloadSlideUrls(directUrls, slidesDir);
+  if (directSlidePaths.length) return directSlidePaths;
+
   const browser = await launchEphemeralBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   await prepareSnapTikPage(page);
@@ -79,8 +196,7 @@ async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
   try {
     await gotoSnapTikSlidePage(page);
 
-    await page.fill("#url", sourceUrl);
-    await page.click('button[type="submit"], input[type="submit"], .button-submit');
+    await submitSnapTikUrl(page, sourceUrl);
     await page.waitForSelector("#download .photo img, #download .download-box", {
       timeout: 30000,
     });
@@ -105,8 +221,7 @@ async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
         const response = await page.request.get(imageUrl, {
           timeout: 30000,
           headers: {
-            "user-agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "user-agent": browserUserAgent,
           },
         });
         if (!response.ok()) continue;
@@ -344,8 +459,7 @@ async function extractTikTokOEmbedMetadata(sourceUrl) {
   try {
     const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(sourceUrl)}`, {
       headers: {
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "user-agent": browserUserAgent,
       },
     });
     if (!response.ok) return { caption: "", hashtags: [] };
@@ -364,8 +478,7 @@ async function extractSnapTikMetadata(sourceUrl) {
   try {
     await gotoSnapTikSlidePage(page);
 
-    await page.fill("#url", sourceUrl);
-    await page.click('button[type="submit"], input[type="submit"], .button-submit');
+    await submitSnapTikUrl(page, sourceUrl);
     await page.waitForSelector("#download .download-box, #download .photo img", {
       timeout: 45000,
     });

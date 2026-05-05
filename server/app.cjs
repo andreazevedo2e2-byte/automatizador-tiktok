@@ -119,6 +119,14 @@ function getOwnerKeys(user = {}) {
   return [String(user.id || "").trim(), String(user.email || "").trim()].filter(Boolean);
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timeout = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
+}
+
 function createApp(config = {}) {
   const app = express();
   const rootDir = config.rootDir || path.resolve(__dirname, "..");
@@ -248,7 +256,11 @@ function createApp(config = {}) {
       let slidePaths = [];
       let provider = "snaptik";
       try {
-        slidePaths = await services.captureSlidesViaSnapTik(sourceUrl, store.getSlidesDir(runId));
+        slidePaths = await withTimeout(
+          services.captureSlidesViaSnapTik(sourceUrl, store.getSlidesDir(runId)),
+          90000,
+          "SnapTik demorou demais para responder."
+        );
       } catch (snapTikError) {
         if (!allowDirectFallback) {
           throw new Error(
@@ -257,11 +269,15 @@ function createApp(config = {}) {
         }
 
         provider = "tiktok-direct";
-        slidePaths = await services.captureSlidesDirectly({
-          sourceUrl,
-          slidesDir: store.getSlidesDir(runId),
-          sharedBrowserContext,
-        });
+        slidePaths = await withTimeout(
+          services.captureSlidesDirectly({
+            sourceUrl,
+            slidesDir: store.getSlidesDir(runId),
+            sharedBrowserContext,
+          }),
+          90000,
+          `SnapTik falhou e o fallback direto também demorou demais. ${snapTikError?.message || ""}`.trim()
+        );
       }
 
       const slides = await services.runOcr(slidePaths, runId);
