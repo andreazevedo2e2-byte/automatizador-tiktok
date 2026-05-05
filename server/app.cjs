@@ -32,6 +32,7 @@ const { translateTexts } = require("./lib/translate.cjs");
 function buildRunResponse(run) {
   return {
     runId: run.runId,
+    title: run.title || "",
     sourceUrl: run.sourceUrl,
     provider: run.provider,
     stage: run.stage,
@@ -106,7 +107,18 @@ function createApp(config = {}) {
 
   app.get("/api/history", async (_req, res) => {
     try {
-      res.json({ items: await publishStore.listHistory() });
+      const items = await publishStore.listHistory();
+      const hydrated = await Promise.all(
+        items.map(async (item) => {
+          try {
+            const localRun = await store.loadRun(item.runId || item.run_id);
+            return { ...item, title: localRun.title || item.title || "" };
+          } catch {
+            return item;
+          }
+        })
+      );
+      res.json({ items: hydrated });
     } catch (error) {
       res.status(400).json({ error: error.message || "Could not load history." });
     }
@@ -147,6 +159,27 @@ function createApp(config = {}) {
       res.json(buildRunResponse(run));
     } catch {
       res.status(404).json({ error: "Run not found." });
+    }
+  });
+
+  app.patch("/api/runs/:runId/meta", async (req, res) => {
+    try {
+      const title = String(req.body?.title || "").trim().slice(0, 120);
+      const nextRun = await store.updateRun(req.params.runId, (run) => ({ ...run, title }));
+      await publishStore.upsertRun(nextRun);
+      res.json(buildRunResponse(nextRun));
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not update project." });
+    }
+  });
+
+  app.delete("/api/runs/:runId", async (req, res) => {
+    try {
+      await store.deleteRun(req.params.runId);
+      if (publishStore.deleteRun) await publishStore.deleteRun(req.params.runId);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Could not delete project." });
     }
   });
 
@@ -233,6 +266,7 @@ function createApp(config = {}) {
 
       const run = {
         runId,
+        title: "",
         sourceUrl,
         provider,
         stage: "review",
@@ -277,6 +311,7 @@ function createApp(config = {}) {
 
       const run = {
         runId,
+        title: "",
         sourceUrl: "local-upload",
         provider: "upload",
         stage: "review",
