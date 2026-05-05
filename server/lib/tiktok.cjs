@@ -1,6 +1,11 @@
 const fs = require("node:fs/promises");
+const crypto = require("node:crypto");
 const path = require("node:path");
+const vm = require("node:vm");
 const { chromium } = require("playwright");
+
+const browserUserAgent =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 async function findChromeExecutable() {
   const candidates = [
@@ -39,12 +44,112 @@ async function launchPersistentContext(profileDir, isHeadless) {
     headless: isHeadless,
     viewport: { width: 1320, height: 920 },
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    userAgent: browserUserAgent,
   });
 }
 
+function decodeSnapTikScript(script) {
+  let decoded = "";
+  try {
+    vm.runInNewContext(script, {
+      eval: (value) => {
+        decoded = String(value || "");
+      },
+      decodeURIComponent,
+      escape,
+      Math,
+      RegExp,
+      String,
+    });
+  } catch {
+    return script;
+  }
+  return decoded || script;
+}
+
+function extractUrlsFromSnapTikScript(script) {
+  const decoded = decodeSnapTikScript(script);
+  const matches = decoded.match(/https?:\\?\/\\?\/[^"'<>\\\s]+/g) || [];
+  return [
+    ...new Set(
+      matches
+        .map((url) =>
+          url
+            .replace(/\\\//g, "/")
+            .replace(/\\u0026/g, "&")
+            .replace(/&amp;/g, "&")
+            .replace(/\\+$/g, "")
+            .trim()
+        )
+        .filter((url) => url.includes("d.rapidcdn.app/v2") || url.includes("tiktokcdn"))
+    ),
+  ];
+}
+
+async function fetchSnapTikDownloadUrls(sourceUrl) {
+  const pageResponse = await fetch("https://snaptik.app/pt/download-tiktok-slide", {
+    headers: { "user-agent": browserUserAgent },
+  });
+  if (!pageResponse.ok) throw new Error(`SnapTik page returned ${pageResponse.status}.`);
+
+  const html = await pageResponse.text();
+  const token = html.match(/name=["']token["']\s+value=["']([^"']+)["']/i)?.[1] || "";
+  const form = new FormData();
+  form.set("url", sourceUrl);
+  form.set("lang", "pt");
+  if (token) form.set("token", token);
+
+  const apiResponse = await fetch("https://snaptik.app/abc2.php", {
+    method: "POST",
+    body: form,
+    headers: {
+      "user-agent": browserUserAgent,
+      referer: "https://snaptik.app/pt/download-tiktok-slide",
+    },
+  });
+  if (!apiResponse.ok) throw new Error(`SnapTik API returned ${apiResponse.status}.`);
+
+  const urls = extractUrlsFromSnapTikScript(await apiResponse.text());
+  const tiktokCdnUrls = urls.filter((url) => url.includes("tiktokcdn") && /photomode|tplv-photomode/i.test(url));
+  const rapidUrls = urls.filter((url) => url.includes("d.rapidcdn.app/v2"));
+  return tiktokCdnUrls.length ? tiktokCdnUrls : rapidUrls.length ? rapidUrls : urls;
+}
+
+async function downloadSlideUrls(imageUrls, slidesDir) {
+  const slidePaths = [];
+  const seenHashes = new Set();
+
+  for (const imageUrl of imageUrls) {
+    try {
+      const response = await fetch(imageUrl, { headers: { "user-agent": browserUserAgent } });
+      if (!response.ok) continue;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length < 5000) continue;
+
+      const hash = crypto.createHash("sha1").update(bytes).digest("hex");
+      if (seenHashes.has(hash)) continue;
+      seenHashes.add(hash);
+
+      const slidePath = path.join(slidesDir, `slide-${String(slidePaths.length + 1).padStart(2, "0")}.jpg`);
+      await fs.writeFile(slidePath, bytes);
+      slidePaths.push(slidePath);
+    } catch {
+      // Keep going: CDN signed URLs can fail intermittently.
+    }
+  }
+
+  return slidePaths;
+}
+
 async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
+  try {
+    const directUrls = await fetchSnapTikDownloadUrls(sourceUrl);
+    const directSlidePaths = await downloadSlideUrls(directUrls, slidesDir);
+    if (directSlidePaths.length) return directSlidePaths;
+  } catch (directError) {
+    console.warn("[snaptik] direct endpoint failed, using browser fallback", directError?.message || directError);
+  }
+
   const browser = await launchEphemeralBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
 
@@ -80,8 +185,7 @@ async function captureSlidesViaSnapTik(sourceUrl, slidesDir) {
         const response = await page.request.get(imageUrl, {
           timeout: 30000,
           headers: {
-            "user-agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+            "user-agent": browserUserAgent,
           },
         });
         if (!response.ok()) continue;

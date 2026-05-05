@@ -20,6 +20,7 @@ const productionApiBase = "https://zapspark-tiktok-extractor.te7sty.easypanel.ho
 const apiBase = envApiBase || (window.location.hostname === "127.0.0.1" ? "http://127.0.0.1:4141" : productionApiBase);
 const sampleUrl =
   "https://www.tiktok.com/@landon.vaughn17/photo/7633592588674551053?is_from_webapp=1&sender_device=pc&web_id=7634388741662869010";
+const extractionEstimateSeconds = 300;
 
 const steps = [
   { key: "extract", number: "01", title: "Extrair", hint: "Link ou prints" },
@@ -68,6 +69,13 @@ function getActiveStage(run) {
 
 function copyText(value) {
   return navigator.clipboard.writeText(value || "");
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Math.floor(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
 function LoadingIcon({ active }) {
@@ -195,7 +203,7 @@ function PhonePreview({ slide, slideIndex, total, rendered = false, onPrev, onNe
   );
 }
 
-function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots }) {
+function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots, elapsedSeconds, remainingSeconds }) {
   const uploadRef = useRef(null);
 
   return (
@@ -234,6 +242,26 @@ function ExtractStage({ url, setUrl, onExtract, extracting, onUploadScreenshots 
           />
         </div>
       </div>
+
+      {extracting && (
+        <div className="extract-timer" role="status" aria-live="polite">
+          <div className="extract-timer__grid">
+            <div className="extract-timer__metric">
+              <span>Tempo padrão</span>
+              <strong>até 5 minutos</strong>
+            </div>
+            <div className="extract-timer__metric">
+              <span>Rodando há</span>
+              <strong>{formatDuration(elapsedSeconds)}</strong>
+            </div>
+            <div className="extract-timer__metric">
+              <span>Previsão</span>
+              <strong>{remainingSeconds > 0 ? formatDuration(remainingSeconds) : "finalizando"}</strong>
+            </div>
+          </div>
+          <p>Estou baixando os slides, lendo o texto e preparando a revisão. Se passar disso, eu mostro o erro na tela.</p>
+        </div>
+      )}
 
       <div className="soft-note">
         <Sparkles size={18} />
@@ -656,6 +684,8 @@ export function App() {
   const [previewIndex, setPreviewIndex] = useState(0);
   const [replacementFiles, setReplacementFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
+  const [extractStartedAt, setExtractStartedAt] = useState(null);
+  const [timerNow, setTimerNow] = useState(Date.now());
   const [savingReview, setSavingReview] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -664,6 +694,8 @@ export function App() {
   const [publishing, setPublishing] = useState(false);
 
   const activeStage = getActiveStage(run);
+  const extractionElapsedSeconds = extracting && extractStartedAt ? Math.floor((timerNow - extractStartedAt) / 1000) : 0;
+  const extractionRemainingSeconds = Math.max(extractionEstimateSeconds - extractionElapsedSeconds, 0);
   const replacementPreviews = useMemo(
     () =>
       replacementFiles.map((file) => ({
@@ -679,6 +711,13 @@ export function App() {
       replacementPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
     };
   }, [replacementPreviews]);
+
+  useEffect(() => {
+    if (!extracting || !extractStartedAt) return undefined;
+    setTimerNow(Date.now());
+    const interval = window.setInterval(() => setTimerNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [extracting, extractStartedAt]);
 
   useEffect(() => {
     if (activeStage === "publish" && !accounts.length && !loadingAccounts) {
@@ -730,6 +769,7 @@ export function App() {
   async function extractPost() {
     setError("");
     setExtracting(true);
+    setExtractStartedAt(Date.now());
     setStatus("Extraindo slides e lendo o texto...");
 
     try {
@@ -747,6 +787,7 @@ export function App() {
       setStatus("Extração não concluída.");
     } finally {
       setExtracting(false);
+      setExtractStartedAt(null);
     }
   }
 
@@ -1001,6 +1042,8 @@ export function App() {
             extracting={extracting}
             onExtract={extractPost}
             onUploadScreenshots={uploadScreenshots}
+            elapsedSeconds={extractionElapsedSeconds}
+            remainingSeconds={extractionRemainingSeconds}
           />
         )}
 
@@ -1063,7 +1106,10 @@ export function App() {
         {(extracting || savingReview || uploadingImages || rendering || publishing) && (
           <div className="work-overlay">
             <LoadingIcon active />
-            <span>{status}</span>
+            <span>
+              {status}
+              {extracting && extractStartedAt ? ` · ${formatDuration(extractionElapsedSeconds)} de até 5:00` : ""}
+            </span>
           </div>
         )}
       </section>
