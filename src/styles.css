@@ -1411,3 +1411,137 @@ button:disabled,
     grid-template-columns: 1fr;
   }
 }
+
+/* Product-flow fixes: real navigation, manageable project history, and stable media cards. */
+button.brand-mark,
+button.rail-step {
+  font: inherit;
+}
+
+button.brand-mark {
+  border: 0;
+  cursor: pointer;
+}
+
+button.rail-step {
+  width: 100%;
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.rail-step:disabled {
+  cursor: not-allowed;
+}
+
+.status-pill button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.stage-card {
+  overflow: auto;
+}
+
+.project-card {
+  position: relative;
+  grid-template-rows: 1fr auto;
+}
+
+.project-card__main {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.project-card__actions,
+.project-card__editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-card__actions {
+  justify-content: flex-end;
+}
+
+.project-card__actions button,
+.project-card__editor button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.065);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.project-card__editor {
+  flex-wrap: wrap;
+}
+
+.project-card__editor input {
+  min-width: 160px;
+  flex: 1;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(77, 242, 165, 0.34);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--ink);
+}
+
+.review-workbench,
+.download-workbench {
+  grid-template-columns: minmax(340px, 0.86fr) minmax(480px, 1.14fr);
+}
+
+.phone-preview {
+  width: min(360px, 100%);
+}
+
+.phone-screen {
+  height: min(100%, 58vh);
+}
+
+.image-slot-grid {
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  grid-auto-rows: minmax(260px, auto);
+}
+
+.image-slot-card {
+  min-height: 260px;
+}
+
+.image-slot-card img {
+  min-height: 190px;
+  aspect-ratio: 9 / 16;
+  object-fit: contain;
+  background: #050608;
+}
+
+.image-slot-card > div {
+  min-height: 190px;
+}
+
+.download-panel,
+.review-editor-panel {
+  overflow: auto;
+}
