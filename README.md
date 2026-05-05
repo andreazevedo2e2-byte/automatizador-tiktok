@@ -30,10 +30,10 @@ Use service type Docker Compose and paste [docker-compose.yml](/C:/Users/andre/D
 
 Before deploy, edit:
 
-- `ALLOWED_ORIGINS=https://automatizador-tiktok.vercel.app`
+- `ALLOWED_ORIGINS=https://automatizador-tiktok-six.vercel.app`
 - `GOOGLE_CLIENT_ID=...`
 - `GOOGLE_CLIENT_SECRET=...`
-- `GOOGLE_REDIRECT_URI=https://automatizador-tiktok.vercel.app/google-drive/callback`
+- `GOOGLE_REDIRECT_URI=https://automatizador-tiktok-six.vercel.app/google-drive/callback`
 - `SUPABASE_URL=...` and `SUPABASE_SERVICE_ROLE_KEY=...` if you want persistent history.
 
 Expose port `4141` via your domain, for example:
@@ -46,7 +46,7 @@ Project root: this folder (`automatizador-tiktok`), using [vercel.json](/C:/User
 
 Live frontend:
 
-- `https://automatizador-tiktok.vercel.app`
+- `https://automatizador-tiktok-six.vercel.app`
 
 ### 3) Login session flow
 
@@ -58,7 +58,7 @@ In the deployed frontend:
 
 ## Google Drive + Supabase
 
-1. Create a Google OAuth web client and add `https://automatizador-tiktok.vercel.app/google-drive/callback` as the authorized redirect URI.
+1. Create a Google OAuth web client and add `https://automatizador-tiktok-six.vercel.app/google-drive/callback` as the authorized redirect URI.
 2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in the backend.
 3. In Supabase SQL Editor, run `supabase/schema.sql`.
 4. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the backend, never in Vercel frontend env.
@@ -69,5 +69,5 @@ In the deployed frontend:
 - Google Auth Platform: https://console.cloud.google.com/auth/overview
 - OAuth clients: https://console.cloud.google.com/auth/clients
 - Enable Google Drive API: https://console.cloud.google.com/apis/library/drive.googleapis.com
-- Production redirect URI: https://automatizador-tiktok.vercel.app/google-drive/callback
+- Production redirect URI: https://automatizador-tiktok-six.vercel.app/google-drive/callback
 - App Drive connect endpoint after backend env is set: https://zapspark-tiktok-extractor.te7sty.easypanel.host/api/google-drive/oauth/start
