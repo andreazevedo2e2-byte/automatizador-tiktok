@@ -1,4 +1,4 @@
-const { cleanOcrText, restoreGluedEnglish, scoreOcrCandidate } = require("../server/lib/ocr.cjs");
+const { cleanOcrText, restoreGluedEnglish, scoreOcrCandidate, shouldUsePaddleFastPath } = require("../server/lib/ocr.cjs");
 
 describe("ocr cleanup", () => {
   it("repairs glued English from slideshow OCR", () => {
@@ -19,5 +19,23 @@ describe("ocr cleanup", () => {
     });
 
     expect(clean).toBeGreaterThan(noisy);
+  });
+
+  it("uses PaddleOCR directly when the text is already readable", () => {
+    expect(
+      shouldUsePaddleFastPath({
+        source: "paddle",
+        text: "10 things I wish I knew\nas a beginner",
+        confidence: 66,
+      })
+    ).toBe(true);
+
+    expect(
+      shouldUsePaddleFastPath({
+        source: "paddle",
+        text: "SNE ) i} Ln . Cre J > Ar mT Fo Sf 4 ht",
+        confidence: 30,
+      })
+    ).toBe(false);
   });
 });

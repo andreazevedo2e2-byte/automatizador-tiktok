@@ -343,6 +343,15 @@ function chooseBestCandidate(candidates) {
   return best;
 }
 
+function shouldUsePaddleFastPath(candidate) {
+  const text = String(candidate?.text || "").trim();
+  if (!text) return false;
+
+  const alphaNumeric = (text.match(/[A-Za-z0-9]/g) || []).length;
+  const junk = (text.match(/[^A-Za-z0-9\s.,:;!?'"#@&%+\-/()]/g) || []).length;
+  return alphaNumeric >= 2 && junk <= Math.max(4, alphaNumeric * 0.18) && scoreOcrCandidate(candidate) >= 35;
+}
+
 function buildPaddleText(rawRecognition, service) {
   if (!rawRecognition?.length) return "";
   const processed = service.processRecognition(rawRecognition, { lineMergeThresholdRatio: 0.8 });
@@ -452,11 +461,23 @@ async function runPaddleCandidates(rootDir, imagePath) {
   }
 }
 
-async function recognizeSlide({ rootDir, worker, slidePath }) {
+async function recognizeSlide({ rootDir, getWorker, slidePath }) {
   const metadata = await sharp(slidePath).metadata();
   const paddle = await runPaddleCandidates(rootDir, slidePath);
+  const preferredPosition = inferPositionFromBoxes(paddle.boxes, metadata.height || 1920);
+
+  if (shouldUsePaddleFastPath(paddle.candidate)) {
+    return {
+      text: paddle.candidate.text,
+      confidence: paddle.candidate.confidence,
+      preferredPosition,
+      ocrSource: paddle.candidate.source,
+    };
+  }
+
   const crop = getTextCropFromBoxes(paddle.boxes, metadata);
   const candidates = [];
+  const worker = await getWorker();
 
   if (paddle.candidate) candidates.push(paddle.candidate);
   candidates.push(...(await runTesseractCandidates(worker, slidePath, crop)));
@@ -470,23 +491,29 @@ async function recognizeSlide({ rootDir, worker, slidePath }) {
   return {
     text: best.text,
     confidence: best.confidence,
-    preferredPosition: inferPositionFromBoxes(paddle.boxes, metadata.height || 1920),
+    preferredPosition,
     ocrSource: best.source,
   };
 }
 
 function createOcrRunner(rootDir) {
   return async function runOcr(slidePaths, runId) {
-    const worker = await createWorker("eng", 1, {
-      langPath: rootDir,
-      cachePath: path.join(rootDir, ".tesseract-cache"),
-      gzip: false,
-    });
+    let worker = null;
+    const getWorker = async () => {
+      if (!worker) {
+        worker = await createWorker("eng", 1, {
+          langPath: rootDir,
+          cachePath: path.join(rootDir, ".tesseract-cache"),
+          gzip: false,
+        });
+      }
+      return worker;
+    };
 
     const slides = [];
     try {
       for (const [index, slidePath] of slidePaths.entries()) {
-        const recognized = await recognizeSlide({ rootDir, worker, slidePath });
+        const recognized = await recognizeSlide({ rootDir, getWorker, slidePath });
         slides.push({
           index: index + 1,
           sourceImagePath: slidePath,
@@ -504,7 +531,7 @@ function createOcrRunner(rootDir) {
         });
       }
     } finally {
-      await worker.terminate();
+      if (worker) await worker.terminate();
     }
 
     return slides;
@@ -516,4 +543,5 @@ module.exports = {
   createOcrRunner,
   restoreGluedEnglish,
   scoreOcrCandidate,
+  shouldUsePaddleFastPath,
 };
