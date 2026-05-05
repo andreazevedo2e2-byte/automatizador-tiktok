@@ -3,17 +3,17 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      PORT: "4141"
+      PORT: "80"
       HOST: "0.0.0.0"
       HEADLESS: "false"
-      ALLOWED_ORIGINS: "https://automatizador-tiktok.vercel.app"
+      ALLOWED_ORIGINS: "https://automatizador-tiktok.vercel.app,https://automatizador-tiktok-six.vercel.app"
       REMOTE_LOGIN_URL: "https://zapspark-tiktok-login.te7sty.easypanel.host/vnc.html?autoconnect=true&resize=remote"
       SUPABASE_URL: "https://caewwltkbmblwijkfrlz.supabase.co"
       SUPABASE_PUBLISHABLE_KEY: "sb_publishable_ujhVT6Uz1JoSHCW-fVuI6A_MuSHpSqH"
       SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhZXd3bHRrYm1ibHdpamtmcmx6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzYzNDI1NCwiZXhwIjoyMDkzMjEwMjU0fQ.hAZeQ8sged1pZHhWr4GxHt9LKErnVLNVdvABnszvljs"
       VITE_GOOGLE_CLIENT_ID: ""
     expose:
-      - "4141"
+      - "80"
       - "6080"
     volumes:
       - ./runs:/app/runs
