@@ -1555,13 +1555,13 @@ button.rail-step:disabled {
 
 .studio-header h1 {
   max-width: min(760px, 62vw);
-  font-size: clamp(34px, 3.6vw, 52px);
+  font-size: clamp(32px, 3.2vw, 46px);
   line-height: 1;
   letter-spacing: -0.02em;
 }
 
 .status-pill {
-  width: min(220px, 24vw);
+  width: min(210px, 23vw);
   min-height: 0;
   gap: 2px;
   padding: 10px 12px;
@@ -1591,7 +1591,7 @@ button.rail-step:disabled {
   height: auto;
   min-height: 0;
   margin: 0 24px 20px;
-  padding: 22px;
+  padding: 20px 22px;
   overflow: auto;
   border-radius: 28px;
 }
@@ -1612,7 +1612,7 @@ button.rail-step:disabled {
 .review-toolbar h2,
 .image-stage h2,
 .download-title h2 {
-  font-size: clamp(28px, 3vw, 42px);
+  font-size: clamp(28px, 2.7vw, 38px);
   line-height: 1.05;
 }
 
@@ -1639,6 +1639,21 @@ button.rail-step:disabled {
   height: 100%;
   min-height: 0;
   max-height: 390px;
+}
+
+.review-stage .story-column {
+  grid-template-rows: auto auto;
+  overflow: visible;
+}
+
+.review-stage .phone-preview {
+  height: auto;
+  max-height: none;
+}
+
+.review-stage .phone-screen {
+  height: 285px;
+  max-height: none;
 }
 
 .editor-panel,
