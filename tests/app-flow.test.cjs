@@ -78,7 +78,7 @@ describe("app flow", () => {
         translateTexts: async ({ texts, from, to }) =>
           texts.map((text) => `[${from}->${to}] ${text}`),
         googleDrive: {
-          listFolders: async () => [{ id: "folder-1", name: "perfil 1" }],
+          listDestinationFolders: async () => ({ connected: true, folders: [{ id: "folder-1", name: "Perfil 1" }] }),
           exportRun: async () => ({
             folder: { id: "post-folder-1", name: "post 1", webViewLink: "https://drive.test/post-1" },
             files: [
@@ -150,5 +150,14 @@ describe("app flow", () => {
 
     const history = await request(app).get("/api/history").expect(200);
     expect(history.body.items[0].stage).toBe("preview");
+
+    const renamed = await request(app).patch(`/api/runs/${runId}/meta`).send({ title: "Perfil 1 - campanha" }).expect(200);
+    expect(renamed.body.title).toBe("Perfil 1 - campanha");
+
+    const renamedHistory = await request(app).get("/api/history").expect(200);
+    expect(renamedHistory.body.items[0].title).toBe("Perfil 1 - campanha");
+
+    await request(app).delete(`/api/runs/${runId}`).expect(200);
+    await request(app).get(`/api/runs/${runId}`).expect(404);
   });
 });
