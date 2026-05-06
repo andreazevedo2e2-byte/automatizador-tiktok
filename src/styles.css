@@ -1808,3 +1808,156 @@ button.rail-step:disabled {
     font-size: 22px;
   }
 }
+
+/* Hard layout reset: let the workflow breathe instead of compressing into a fixed viewport. */
+body {
+  overflow: auto;
+}
+
+.app-shell {
+  height: auto;
+  min-height: 100vh;
+  align-items: start;
+  overflow: visible;
+}
+
+.step-rail {
+  position: sticky;
+  top: 14px;
+  height: calc(100vh - 28px);
+}
+
+.studio {
+  height: auto;
+  min-height: calc(100vh - 28px);
+  overflow: visible;
+}
+
+.studio-header {
+  padding: 28px 38px 20px;
+}
+
+.studio-header h1 {
+  max-width: min(760px, calc(100vw - 620px));
+  font-size: clamp(36px, 3.8vw, 58px);
+}
+
+.status-pill {
+  flex: 0 0 260px;
+  width: 260px;
+}
+
+.stage-card {
+  height: auto;
+  min-height: 0;
+  margin: 0 38px 38px;
+  overflow: visible;
+}
+
+.review-stage,
+.download-stage,
+.image-stage,
+.extract-stage {
+  display: grid;
+  align-content: start;
+}
+
+.review-toolbar {
+  margin-bottom: 22px;
+}
+
+.review-workbench,
+.download-workbench {
+  align-items: start;
+  min-height: 0;
+}
+
+.story-column {
+  min-height: 0;
+  overflow: visible;
+}
+
+.review-stage .story-column,
+.download-stage .story-column {
+  grid-template-rows: auto auto;
+}
+
+.phone-preview,
+.review-stage .phone-preview,
+.download-stage .phone-preview {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.phone-screen,
+.review-stage .phone-screen,
+.download-stage .phone-screen {
+  height: clamp(360px, 44vh, 520px);
+  max-height: none;
+}
+
+.slide-rail {
+  min-height: 112px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.review-editor-panel {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  overflow: visible;
+}
+
+.review-editor-panel .input-group,
+.post-meta-panel .input-group {
+  min-height: 0;
+}
+
+.review-editor-panel .input-group.tall textarea {
+  display: block;
+  height: 240px;
+  min-height: 240px;
+  max-height: none;
+}
+
+.post-meta-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.post-meta-panel textarea {
+  display: block;
+  height: 112px;
+  min-height: 112px;
+}
+
+.editor-footer {
+  margin-top: 4px;
+}
+
+.download-panel {
+  max-height: none;
+  overflow: visible;
+}
+
+@media (max-width: 1280px) {
+  .studio-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .studio-header h1 {
+    max-width: none;
+  }
+
+  .status-pill {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .review-workbench,
+  .download-workbench {
+    grid-template-columns: 1fr;
+  }
+}
